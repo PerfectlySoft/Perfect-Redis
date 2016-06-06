@@ -15,30 +15,46 @@ class PerfectRedisTests: XCTestCase {
         return RedisClientIdentifier()
     }
     
-    func testPing() {
+    func testGetClient() {
         let expectation = self.expectation(withDescription: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             
             do {
                 let client = try c()
-            
+                defer {
+                    RedisClient.releaseClient(client)
+                    expectation.fulfill()
+                }
+            } catch {
+                XCTAssert(false, "Could not connect to server \(error)")
+                expectation.fulfill()
+                return
+            }
+        }
+        self.waitForExpectations(withTimeout: 60.0) {
+            _ in
+        }
+    }
+    
+    func testPing() {
+        let expectation = self.expectation(withDescription: "RedisClient")
+        RedisClient.getClient(withIdentifier: clientIdentifier()) {
+            c in
+            do {
+                let client = try c()
                 client.ping {
                     response in
-                    
                     defer {
                         RedisClient.releaseClient(client)
                         expectation.fulfill()
                     }
-                    
                     guard case .simpleString(let s) = response else {
                         XCTAssert(false, "Unexpected response \(response)")
                         return
                     }
-                    
                     XCTAssert(s == "PONG", "Unexpected response \(response)")
                 }
-                    
             } catch {
                 XCTAssert(false, "Could not connect to server \(error)")
                 expectation.fulfill()
