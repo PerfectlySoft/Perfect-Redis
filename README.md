@@ -55,3 +55,41 @@ client.set(key: key, value: .string(value)) {
 	}
 }
 ```
+
+Pub/sub:
+
+```swift
+RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
+	c in
+	do {
+		let client1 = try c()
+		RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
+			c in
+			do {
+				let client2 = try c()
+				client1.subscribe(channels: ["foo"]) {
+					response in
+					client2.publish(channel: "foo", message: .string("Hello!")) {
+						response in
+						client1.readPublished(timeoutSeconds: 5.0) {
+							response in
+							guard case .array(let array) = response else {
+								...
+								return
+							}
+							XCTAssert(array.count == 3, "Invalid array elements")
+							XCTAssert(array[0].toString() == "message")
+							XCTAssert(array[1].toString() == "foo")
+							XCTAssert(array[2].toString() == "Hello!")
+						}
+					}
+				}
+			} catch {
+				...
+			}
+		}
+	} catch {
+		...
+	}
+}
+```
