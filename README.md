@@ -22,7 +22,6 @@ client.ping {
 	response in
 	defer {
 		RedisClient.releaseClient(client)
-		expectation.fulfill()
 	}
 	guard case .simpleString(let s) = response else {
 		...
