@@ -76,6 +76,14 @@ public enum RedisResponse {
     case integer(Int)
     case array([RedisResponse])
     
+    /// Returns true if the response is the Redis standard +OK
+    public var isSimpleOK: Bool {
+        guard case .simpleString(let s) = self where s == "OK" else {
+            return false
+        }
+        return true
+    }
+    
     public func toString() -> String? {
         switch self {
         case .error(let type, let msg):
@@ -246,7 +254,7 @@ public class RedisClient {
                     if !withIdentifier.password.isEmpty {
                         client.auth(withPassword: withIdentifier.password) {
                             response in
-                            guard case .simpleString(let s) = response where s == "OK" else {
+                            guard response.isSimpleOK else {
                                 return callback({ throw PerfectNetError.NetworkError(401, "Not authorized") })
                             }
                             callback({ return client })

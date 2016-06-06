@@ -78,11 +78,10 @@ class PerfectRedisTests: XCTestCase {
                         RedisClient.releaseClient(client)
                         expectation.fulfill()
                     }
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         return
                     }
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
                 }
             } catch {
                 XCTAssert(false, "Could not connect to server \(error)")
@@ -107,11 +106,10 @@ class PerfectRedisTests: XCTestCase {
                         RedisClient.releaseClient(client)
                         expectation.fulfill()
                     }
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         return
                     }
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
                 }
             } catch {
                 XCTAssert(false, "Could not connect to server \(error)")
@@ -133,12 +131,11 @@ class PerfectRedisTests: XCTestCase {
                 let client = try c()
                 client.set(key: key, value: .string(value)) {
                     response in
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         expectation.fulfill()
                         return
                     }
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
                     client.get(key: key) {
                         response in
                         defer {
@@ -169,20 +166,14 @@ class PerfectRedisTests: XCTestCase {
         let expectation = self.expectation(withDescription: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
-            
             do {
                 let client = try c()
-                
                 client.flushAll {
                     response in
-                    
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         return
                     }
-                    
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
-                    
                     // set the string IF IT EXISTS - which is false
                     client.set(key: key, value: .string(value), ifExists: true) {
                         response in
@@ -192,17 +183,12 @@ class PerfectRedisTests: XCTestCase {
                             expectation.fulfill()
                             return
                         }
-                        
-                        XCTAssert(s == "OK", "Unexpected response \(response)")
-                        
                         client.get(key: key) {
                             response in
-                            
                             defer {
                                 RedisClient.releaseClient(client)
                                 expectation.fulfill()
                             }
-                            
                             guard case .bulkString(let bytes) = response where nil == bytes else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 return
@@ -226,31 +212,21 @@ class PerfectRedisTests: XCTestCase {
         let expectation = self.expectation(withDescription: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
-            
             do {
                 let client = try c()
-                
                 client.flushAll {
                     response in
-                    
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         return
                     }
-                    
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
-                    
                     client.set(key: key, value: .string(value)) {
                         response in
-                        
-                        guard case .simpleString(let s) = response else {
+                        guard response.isSimpleOK else {
                             XCTAssert(false, "Unexpected response \(response)")
                             expectation.fulfill()
                             return
                         }
-                        
-                        XCTAssert(s == "OK", "Unexpected response \(response)")
-                        
                         client.get(key: key) {
                             response in
                             
@@ -311,12 +287,11 @@ class PerfectRedisTests: XCTestCase {
                 let client = try c()
                 client.set(key: key, value: .string(value), expires: 2.0) {
                     response in
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         expectation.fulfill()
                         return
                     }
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
                     client.get(key: key) {
                         response in
                         guard case .bulkString = response else {
@@ -367,12 +342,11 @@ class PerfectRedisTests: XCTestCase {
                     
                     client.set(key: key2, value: .string(value2)) {
                         response in
-                        guard case .simpleString(let s) = response else {
+                        guard response.isSimpleOK else {
                             XCTAssert(false, "Unexpected response \(response)")
                             expectation.fulfill()
                             return
                         }
-                        XCTAssert(s == "OK", "Unexpected response \(response)")
                         client.exists(keys: key, key2, "notthere") {
                             response in
                             defer {
@@ -406,12 +380,11 @@ class PerfectRedisTests: XCTestCase {
                 let client = try c()
                 client.set(key: key, value: .string(value)) {
                     response in
-                    guard case .simpleString(let s) = response else {
+                    guard response.isSimpleOK else {
                         XCTAssert(false, "Unexpected response \(response)")
                         expectation.fulfill()
                         return
                     }
-                    XCTAssert(s == "OK", "Unexpected response \(response)")
                     client.get(key: key) {
                         response in
                         guard case .bulkString = response else {
