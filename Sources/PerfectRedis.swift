@@ -126,7 +126,7 @@ public enum RedisResponse {
         }
     }
     
-    static func readResponse(client: RedisClient, callback: (RedisResponse) -> ()) {
+    static func readResponse(client: RedisClient, timeoutSeconds: Double, callback: (RedisResponse) -> ()) {
         if let line = client.pullLineFromBuffer() {
             let endIndex = line.endIndex
             let id = line[0]
@@ -168,13 +168,13 @@ public enum RedisResponse {
             }
             return callback(.error(type: "NET", msg: "Invalid response from server"))
         } else {
-            client.fillBuffer {
+            client.fillBuffer(timeoutSeconds: timeoutSeconds) {
                 ok in
                 
                 guard ok else {
                     return callback(.error(type: "NET", msg: "Failed to read response from server"))
                 }
-                RedisResponse.readResponse(client: client, callback: callback)
+                RedisResponse.readResponse(client: client, timeoutSeconds: timeoutSeconds, callback: callback)
             }
         }
     }
@@ -183,7 +183,7 @@ public enum RedisResponse {
         if count == 0 {
             return arrayCallback(.array(into))
         }
-        RedisResponse.readResponse(client: client) {
+        RedisResponse.readResponse(client: client, timeoutSeconds: redisNetTimeout) {
             element in
             
             if case .error = element {
@@ -302,7 +302,7 @@ public class RedisClient {
         return self.appendCRLF(to: a)
     }
     
-    public func commandBytes(name: String) -> [UInt8] {
+    func commandBytes(name: String) -> [UInt8] {
         return self.appendCRLF(to: name.tobytes)
     }
     
@@ -311,11 +311,13 @@ public class RedisClient {
         self.sendRawCommand(bytes: a, callback: callback)
     }
     
-    public func sendCommand(name: String, callback: redisResponseCallback) {
+    func sendCommand(name: String, callback: redisResponseCallback) {
         let a = self.commandBytes(name: name)
         self.sendRawCommand(bytes: a, callback: callback)
     }
     
+    // sends the bytes to trhe client
+    // reads response when the bytes have been sent
     func sendRawCommand(bytes: [UInt8], callback: redisResponseCallback) {
         self.net.write(bytes: bytes) {
             wrote in
@@ -329,9 +331,10 @@ public class RedisClient {
     }
     
     func readResponse(callback: redisResponseCallback) {
-        RedisResponse.readResponse(client: self, callback: callback)
+        RedisResponse.readResponse(client: self, timeoutSeconds: redisNetTimeout, callback: callback)
     }
     
+    // pull the request number of bytes from the buffer
     func extractBytesFromBuffer(size: Int, callback: ([UInt8]?) -> ()) {
         if self.availableBufferedBytes >= size {
             let ary = Array(self.readBuffer[self.readBufferOffset..<self.readBufferOffset+size])
@@ -339,7 +342,7 @@ public class RedisClient {
             self.trimReadBuffer()
             callback(ary)
         } else {
-            self.fillBuffer {
+            self.fillBuffer(timeoutSeconds: redisNetTimeout) {
                 ok in
                 if ok {
                     self.extractBytesFromBuffer(size: size, callback: callback)
@@ -385,7 +388,7 @@ public class RedisClient {
     }
     
     // bool indicates that at least one byte was read before timing out
-    func fillBuffer(callback: (Bool) -> ()) {
+    func fillBuffer(timeoutSeconds: Double, callback: (Bool) -> ()) {
         self.net.readSomeBytes(count: redisDefaultReadSize) {
             readBytes in
             guard let readBytes = readBytes else {
@@ -393,7 +396,7 @@ public class RedisClient {
             }
             if readBytes.count == 0 {
                 // no data was available now. try with timeout
-                self.net.readBytesFully(count: 1, timeoutSeconds: redisNetTimeout) {
+                self.net.readBytesFully(count: 1, timeoutSeconds: timeoutSeconds) {
                     readBytes in
                     guard let readBytes = readBytes else {
                         return callback(false)
@@ -865,6 +868,70 @@ public extension RedisClient {
         self.sendCommand(name: "LREM \(key) \(count) \(value.toString())", callback: callback)
     }
     
+}
+
+/// Multi (transaction) related operations.
+public extension RedisClient {
+    
+    /// Begin a transaction.
+    func multiBegin(callback: redisResponseCallback) {
+        self.sendCommand(name: "MULTI", callback: callback)
+    }
+    
+    /// Execute a transation.
+    func multiExec(callback: redisResponseCallback) {
+        self.sendCommand(name: "EXEC", callback: callback)
+    }
+    
+    /// Discard a transaction.
+    func multiDiscard(callback: redisResponseCallback) {
+        self.sendCommand(name: "DISCARD", callback: callback)
+    }
+    
+    /// Watch keys for modification during a transaction.
+    func multiWatch(keys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "WATCH \(keys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Unwatch keys for modification during a transaction.
+    func multiUnwatch(callback: redisResponseCallback) {
+        self.sendCommand(name: "UNWATCH", callback: callback)
+    }
+}
+
+/// Pub/sub related operations.
+public extension RedisClient {
+    
+    /// Subscribe to the following patterns.
+    func subscribe(patterns: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "PSUBSCRIBE \(patterns.joined(separator: " "))", callback: callback)
+    }
+    /// Subscribe to the following channels.
+    func subscribe(channels: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SUBSCRIBE \(channels.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Unsubscribe to the following patterns.
+    func unsubscribe(patterns: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "PUNSUBSCRIBE \(patterns.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Unsubscribe to the following channels.
+    func unsubscribe(channels: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "UNSUBSCRIBE \(channels.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Publish a message to the channel.
+    func publish(channel: String, message: RedisValue, callback: redisResponseCallback) {
+        self.sendCommand(name: "PUBLISH \(channel) \(message.toString())", callback: callback)
+    }
+    
+    /// Read a published message given a timeout.
+    func readPublished(timeoutSeconds: Double, callback: redisResponseCallback) {
+        RedisResponse.readResponse(client: self, timeoutSeconds: timeoutSeconds, callback: callback)
+    }
+    
+    // PUBSUB
 }
 
 /// Cluster related operations. Write me! !FIX!

@@ -438,6 +438,57 @@ class PerfectRedisTests: XCTestCase {
         }
     }
     
+    func testPubSub() {
+        let expectation1 = self.expectation(withDescription: "RedisClient1")
+        let expectation2 = self.expectation(withDescription: "RedisClient2")
+        RedisClient.getClient(withIdentifier: self.clientIdentifier()) {
+            c in
+            do {
+                let client1 = try c()
+                RedisClient.getClient(withIdentifier: self.clientIdentifier()) {
+                    c in
+                    do {
+                        let client2 = try c()
+                        client1.subscribe(channels: ["foo"]) {
+                            response in
+                            client2.publish(channel: "foo", message: .string("Hello!")) {
+                                response in
+                                client1.readPublished(timeoutSeconds: 5.0) {
+                                    response in
+                                    defer {
+                                        expectation1.fulfill()
+                                        expectation2.fulfill()
+                                    }
+                                    guard case .array(let array) = response else {
+                                        XCTAssert(false, "Invalid response from server")
+                                        return
+                                    }
+                                    XCTAssert(array.count == 3, "Invalid array elements")
+                                    XCTAssert(array[0].toString() == "message")
+                                    XCTAssert(array[1].toString() == "foo")
+                                    XCTAssert(array[2].toString() == "Hello!")
+                                }
+                            }
+                        }
+                    } catch {
+                        XCTAssert(false, "Could not connect to server \(error)")
+                        expectation1.fulfill()
+                        expectation2.fulfill()
+                        return
+                    }
+                }
+            } catch {
+                XCTAssert(false, "Could not connect to server \(error)")
+                expectation1.fulfill()
+                expectation2.fulfill()
+                return
+            }
+        }
+        self.waitForExpectations(withTimeout: 60.0) {
+            _ in
+        }
+    }
+    
     static var allTests : [(String, (PerfectRedisTests) -> () throws -> Void)] {
         return [
             ("testPing", testPing)
