@@ -942,6 +942,101 @@ public extension RedisClient {
     // PUBSUB
 }
 
+/// Set related operations. Write me! !FIX!
+public extension RedisClient {
+    
+    /// Inserts the new elements into the set.
+    func setAdd(key: String, elements: [RedisValue], callback: redisResponseCallback) {
+        self.sendCommand(name: "SADD \(key) \(elements.map { $0.toString() }.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Returns the number of elements in the set.
+    func setCount(key: String, callback: redisResponseCallback) {
+        self.sendCommand(name: "SCARD \(key)", callback: callback)
+    }
+    
+    /// Returns the difference between `key` and `againstKeys`.
+    func setDifference(key: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SDIFF \(key) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Stores to `into` the difference between `ofKey` and `againstKeys`.
+    func setStoreDifference(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SDIFFSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Returns the intersection of `key` and `againstKeys`.
+    func setIntersection(key: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SINTER \(key) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Stores to `into` the intersection of `ofKey` and `againstKeys`.
+    func setStoreIntersection(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SINTERSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Returns the union of `key` and `againstKeys`.
+    func setUnion(key: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SUNION \(key) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Stores to `into` the union of `ofKey` and `againstKeys`.
+    func setStoreUnion(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+        self.sendCommand(name: "SUNIONSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Checks if the set `key` contains `value`.
+    func setContains(key: String, value: RedisValue, callback: redisResponseCallback) {
+        self.sendCommand(name: "SISMEMBER \(key) \(value.toString())", callback: callback)
+    }
+    
+    /// Returns the members of set `key`.
+    func setMembers(key: String, callback: redisResponseCallback) {
+        self.sendCommand(name: "SMEMBERS \(key)", callback: callback)
+    }
+    
+    /// Moves the set `value` `fromKey` to `toKey`.
+    func setMove(fromKey: String, toKey: String, value: RedisValue, callback: redisResponseCallback) {
+        self.sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.toString())", callback: callback)
+    }
+    
+    /// Removes and returns `count` random elements of set `key`.
+    func setRandomPop(key: String, count: Int, callback: redisResponseCallback) {
+        self.sendCommand(name: "SPOP \(key) \(count)", callback: callback)
+    }
+    
+    /// Removes and returns a random element of set `key`.
+    func setRandomPop(key: String, callback: redisResponseCallback) {
+        self.sendCommand(name: "SPOP \(key)", callback: callback)
+    }
+    
+    /// Returns `count` random elements of set `key`.
+    func setRandomGet(key: String, count: Int, callback: redisResponseCallback) {
+        self.sendCommand(name: "SRANDMEMBER \(key) \(count)", callback: callback)
+    }
+    
+    /// Returns a random element of set `key`.
+    func setRandomGet(key: String, callback: redisResponseCallback) {
+        self.sendCommand(name: "SRANDMEMBER \(key)", callback: callback)
+    }
+    
+    /// Removes the value from set `key`.
+    func setRemove(key: String, value: RedisValue, callback: redisResponseCallback) {
+        self.sendCommand(name: "SREM \(key) \(value.toString())", callback: callback)
+    }
+    
+    /// Removes the values from set `key`.
+    func setRemove(key: String, values: [RedisValue], callback: redisResponseCallback) {
+        self.sendCommand(name: "SREM \(key) \(values.map { $0.toString() }.joined(separator: " "))", callback: callback)
+    }
+    
+    /// Scans the set `key` given the current cursor, which should start from zero.
+    /// Optionally accepts a pattern and a maximum returned value count.
+    func setScan(key: String, cursor: Int = 0, pattern: String? = nil, count: Int? = nil, callback: redisResponseCallback) {
+        self.sendCommand(name: "SSCAN \(key) \(cursor) \(pattern ?? "") \(nil == count ? "" : String(count))", callback: callback)
+    }
+}
+
 /// Cluster related operations. Write me! !FIX!
 public extension RedisClient {
     
