@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>PerfectRedis  Reference</title>
+    <link rel="stylesheet" type="text/css" href="css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="css/highlight.css" />
+    <meta charset="utf-8">
+    <script src="js/jquery.min.js" defer></script>
+    <script src="js/jazzy.js" defer></script>
+    
+  </head>
+  <body>
+
+
+    <a title="PerfectRedis  Reference"></a>
+
+    <header class="header">
+      <p class="header-col header-col--primary">
+        <a class="header-link" href="index.html">
+          PerfectRedis Docs
+        </a>
+         (67% documented)
+      </p>
+    
+        <p class="header-col header-col--secondary">
+          <a class="header-link" href="https://github.com/PerfectlySoft/Perfect-Redis">
+            <img class="header-icon" src="img/gh.png"/>
+            View on GitHub
+          </a>
+        </p>
+    
+    </header>
+
+    <p class="breadcrumbs">
+      <a class="breadcrumb" href="index.html">PerfectRedis Reference</a>
+      <img class="carat" src="img/carat.png" />
+      PerfectRedis  Reference
+    </p>
+
+    <div class="content-wrapper">
+      <nav class="navigation">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a class="nav-group-name-link" href="Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient.html">RedisClient</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/RedisValue.html">– RedisValue</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/KillFilter.html">– KillFilter</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/ReplyType.html">– ReplyType</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/IntegerType.html">– IntegerType</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/SubCommand.html">– SubCommand</a>
+              </li>
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Classes/RedisClient/BitOperation.html">– BitOperation</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a class="nav-group-name-link" href="Global Variables.html">Global Variables</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Global Variables.html#/s:v12PerfectRedis16redisDefaultPortSi">redisDefaultPort</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a class="nav-group-name-link" href="Enums.html">Enums</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Enums/RedisResponse.html">RedisResponse</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a class="nav-group-name-link" href="Structs.html">Structs</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a class="nav-group-task-link" href="Structs/RedisClientIdentifier.html">RedisClientIdentifier</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+
+        <section class="section">
+          <div class="section-content">
+            
+            <a href='#perfect-redis' class='anchor' aria-hidden=true><span class="header-anchor"></span></a><h1 id='perfect-redis'>Perfect-Redis</h1>
+
+<p>Redis client support for Perfect</p>
+
+<p>Get a redis client with defaults:</p>
+<pre class="highlight swift"><code><span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
+    <span class="n">c</span> <span class="k">in</span>
+    <span class="k">do</span> <span class="p">{</span>
+        <span class="k">let</span> <span class="nv">client</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+        <span class="o">...</span>
+    <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+        <span class="o">...</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre>
+
+<p>Ping the server:</p>
+<pre class="highlight swift"><code><span class="n">client</span><span class="o">.</span><span class="n">ping</span> <span class="p">{</span>
+    <span class="n">response</span> <span class="k">in</span>
+    <span class="n">defer</span> <span class="p">{</span>
+        <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">releaseClient</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+    <span class="p">}</span>
+    <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="o">...</span>
+        <span class="k">return</span>
+    <span class="p">}</span>
+    <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="s">"PONG"</span><span class="p">,</span> <span class="s">"Unexpected response </span><span class="se">\(</span><span class="n">response</span><span class="se">)</span><span class="s">"</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre>
+
+<p>Set/get a value:</p>
+<pre class="highlight swift"><code><span class="nf">let</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="p">(</span><span class="s">"mykey"</span><span class="p">,</span> <span class="s">"myvalue"</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="nf">set</span><span class="p">(</span><span class="nv">key</span><span class="p">:</span> <span class="n">key</span><span class="p">,</span> <span class="nv">value</span><span class="p">:</span> <span class="o">.</span><span class="nf">string</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">response</span> <span class="k">in</span>
+    <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="o">...</span>
+        <span class="k">return</span>
+    <span class="p">}</span>
+    <span class="n">client</span><span class="o">.</span><span class="nf">get</span><span class="p">(</span><span class="nv">key</span><span class="p">:</span> <span class="n">key</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">response</span> <span class="k">in</span>
+        <span class="n">defer</span> <span class="p">{</span>
+            <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">releaseClient</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+        <span class="p">}</span>
+        <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="n">bulkString</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="o">...</span>
+            <span class="k">return</span>
+        <span class="p">}</span>
+        <span class="k">let</span> <span class="nv">s</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="nf">toString</span><span class="p">()</span>
+        <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="n">value</span><span class="p">,</span> <span class="s">"Unexpected response </span><span class="se">\(</span><span class="n">response</span><span class="se">)</span><span class="s">"</span><span class="p">)</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre>
+
+<p>Pub/sub:</p>
+<pre class="highlight swift"><code><span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
+    <span class="n">c</span> <span class="k">in</span>
+    <span class="k">do</span> <span class="p">{</span>
+        <span class="k">let</span> <span class="nv">client1</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+        <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
+            <span class="n">c</span> <span class="k">in</span>
+            <span class="k">do</span> <span class="p">{</span>
+                <span class="k">let</span> <span class="nv">client2</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+                <span class="n">client1</span><span class="o">.</span><span class="nf">subscribe</span><span class="p">(</span><span class="nv">channels</span><span class="p">:</span> <span class="p">[</span><span class="s">"foo"</span><span class="p">])</span> <span class="p">{</span>
+                    <span class="n">response</span> <span class="k">in</span>
+                    <span class="n">client2</span><span class="o">.</span><span class="nf">publish</span><span class="p">(</span><span class="nv">channel</span><span class="p">:</span> <span class="s">"foo"</span><span class="p">,</span> <span class="nv">message</span><span class="p">:</span> <span class="o">.</span><span class="nf">string</span><span class="p">(</span><span class="s">"Hello!"</span><span class="p">))</span> <span class="p">{</span>
+                        <span class="n">response</span> <span class="k">in</span>
+                        <span class="n">client1</span><span class="o">.</span><span class="nf">readPublished</span><span class="p">(</span><span class="nv">timeoutSeconds</span><span class="p">:</span> <span class="mf">5.0</span><span class="p">)</span> <span class="p">{</span>
+                            <span class="n">response</span> <span class="k">in</span>
+                            <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">array</span><span class="p">(</span><span class="k">let</span> <span class="nv">array</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+                                <span class="o">...</span>
+                                <span class="k">return</span>
+                            <span class="p">}</span>
+                            <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">array</span><span class="o">.</span><span class="n">count</span> <span class="o">==</span> <span class="mi">3</span><span class="p">,</span> <span class="s">"Invalid array elements"</span><span class="p">)</span>
+                            <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="nf">toString</span><span class="p">()</span> <span class="o">==</span> <span class="s">"message"</span><span class="p">)</span>
+                            <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="nf">toString</span><span class="p">()</span> <span class="o">==</span> <span class="s">"foo"</span><span class="p">)</span>
+                            <span class="kt">XCTAssert</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="nf">toString</span><span class="p">()</span> <span class="o">==</span> <span class="s">"Hello!"</span><span class="p">)</span>
+                        <span class="p">}</span>
+                    <span class="p">}</span>
+                <span class="p">}</span>
+            <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+                <span class="o">...</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+        <span class="o">...</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre>
+
+          </div>
+        </section>
+
+
+      </article>
+    </div>
+    <section class="footer">
+      <p>© 2016 PerfectlySoft Inc. and the Perfect project authors</p>
+      <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.6.2</a>, a <a class="link" href="http://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+    </section>
+  </body>
+</div>
+</html>
