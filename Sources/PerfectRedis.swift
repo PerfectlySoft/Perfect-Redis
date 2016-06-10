@@ -255,7 +255,7 @@ public class RedisClient {
                         client.auth(withPassword: withIdentifier.password) {
                             response in
                             guard response.isSimpleOK else {
-                                return callback({ throw PerfectNetError.NetworkError(401, "Not authorized") })
+                                return callback({ throw PerfectNetError.networkError(401, "Not authorized") })
                             }
                             callback({ return client })
                         }
@@ -263,7 +263,7 @@ public class RedisClient {
                         callback({ return client })
                     }
                 } else {
-                    callback({ throw PerfectNetError.NetworkError(404, "Server was not available") })
+                    callback({ throw PerfectNetError.networkError(404, "Server was not available") })
                 }
             }
         } catch let e {
