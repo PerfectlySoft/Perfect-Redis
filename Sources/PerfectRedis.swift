@@ -28,7 +28,7 @@ let lf: UInt8 = 10
 let sp: UInt8 = 32
 
 extension String {
-    var tobytes: [UInt8] { return Array(self.utf8) }
+    var bytes: [UInt8] { return Array(self.utf8) }
 }
 
 extension UInt8 {
@@ -110,23 +110,23 @@ public enum RedisResponse {
     func toBytes() -> [UInt8] {
         switch self {
         case .error(let type, let msg):
-            return "-\(type) \(msg)\r\n".tobytes
+            return "-\(type) \(msg)\r\n".bytes
         case .simpleString(let str):
-            return "+\(str)\r\n".tobytes
+            return "+\(str)\r\n".bytes
         case .bulkString(let bytes):
             if let b = bytes {
-                var ary = "$\(b.count)\r\n".tobytes
+                var ary = "$\(b.count)\r\n".bytes
                 ary.append(contentsOf: b)
-                ary.append(contentsOf: "\r\n".tobytes)
+                ary.append(contentsOf: "\r\n".bytes)
                 return ary
             } else {
-                return "$-1\r\n".tobytes
+                return "$-1\r\n".bytes
             }
         case .integer(let int):
-            return ":\(int)\r\n".tobytes
+            return ":\(int)\r\n".bytes
         case.array(let array):
             
-            var ary = "*\(array.count)\r\n".tobytes
+            var ary = "*\(array.count)\r\n".bytes
             for elem in array {
                 ary.append(contentsOf: elem.toBytes())
             }
@@ -300,7 +300,7 @@ public class RedisClient {
     }
     
     func commandBytes(name: String, parameters: [RedisResponse]) -> [UInt8] {
-        var a = name.tobytes
+        var a = name.bytes
         
         for param in parameters {
             a.append(sp)
@@ -311,7 +311,7 @@ public class RedisClient {
     }
     
     func commandBytes(name: String) -> [UInt8] {
-        return self.appendCRLF(to: name.tobytes)
+        return self.appendCRLF(to: name.bytes)
     }
     
     func sendCommand(name: String, parameters: [RedisResponse], callback: redisResponseCallback) {
