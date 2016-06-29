@@ -4,5 +4,5 @@ author_url: https://perfect.org
 github_url: https://github.com/PerfectlySoft/Perfect-Redis
 copyright: '© 2016 PerfectlySoft Inc. and the Perfect project authors'
 theme: fullwidth
-xcodebuild_arguments: [-target, PerfectRedis]
+xcodebuild_arguments: [-target, PerfectRedis, -toolchain, org.swift.3020160620a]
 clean: true

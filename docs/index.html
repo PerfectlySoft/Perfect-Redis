@@ -105,9 +105,9 @@
 <pre class="highlight swift"><code><span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
     <span class="n">c</span> <span class="k">in</span>
     <span class="k">do</span> <span class="p">{</span>
-        <span class="k">let</span> <span class="nv">client</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+        <span class="k">let</span> <span class="nv">client</span> <span class="o">=</span> <span class="k">try</span> <span class="nf">c</span><span class="p">()</span>
         <span class="o">...</span>
-    <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
         <span class="o">...</span>
     <span class="p">}</span>
 <span class="p">}</span>
@@ -116,10 +116,10 @@
 <p>Ping the server:</p>
 <pre class="highlight swift"><code><span class="n">client</span><span class="o">.</span><span class="n">ping</span> <span class="p">{</span>
     <span class="n">response</span> <span class="k">in</span>
-    <span class="n">defer</span> <span class="p">{</span>
+    <span class="k">defer</span> <span class="p">{</span>
         <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">releaseClient</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
     <span class="p">}</span>
-    <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
         <span class="o">...</span>
         <span class="k">return</span>
     <span class="p">}</span>
@@ -131,16 +131,16 @@
 <pre class="highlight swift"><code><span class="nf">let</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="p">(</span><span class="s">"mykey"</span><span class="p">,</span> <span class="s">"myvalue"</span><span class="p">)</span>
 <span class="n">client</span><span class="o">.</span><span class="nf">set</span><span class="p">(</span><span class="nv">key</span><span class="p">:</span> <span class="n">key</span><span class="p">,</span> <span class="nv">value</span><span class="p">:</span> <span class="o">.</span><span class="nf">string</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="p">{</span>
     <span class="n">response</span> <span class="k">in</span>
-    <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+    <span class="k">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">simpleString</span><span class="p">(</span><span class="k">let</span> <span class="nv">s</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
         <span class="o">...</span>
         <span class="k">return</span>
     <span class="p">}</span>
     <span class="n">client</span><span class="o">.</span><span class="nf">get</span><span class="p">(</span><span class="nv">key</span><span class="p">:</span> <span class="n">key</span><span class="p">)</span> <span class="p">{</span>
         <span class="n">response</span> <span class="k">in</span>
-        <span class="n">defer</span> <span class="p">{</span>
+        <span class="k">defer</span> <span class="p">{</span>
             <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">releaseClient</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
         <span class="p">}</span>
-        <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="n">bulkString</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="k">guard</span> <span class="k">case</span> <span class="o">.</span><span class="n">bulkString</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
             <span class="o">...</span>
             <span class="k">return</span>
         <span class="p">}</span>
@@ -154,18 +154,18 @@
 <pre class="highlight swift"><code><span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
     <span class="n">c</span> <span class="k">in</span>
     <span class="k">do</span> <span class="p">{</span>
-        <span class="k">let</span> <span class="nv">client1</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+        <span class="k">let</span> <span class="nv">client1</span> <span class="o">=</span> <span class="k">try</span> <span class="nf">c</span><span class="p">()</span>
         <span class="kt">RedisClient</span><span class="o">.</span><span class="nf">getClient</span><span class="p">(</span><span class="nv">withIdentifier</span><span class="p">:</span> <span class="kt">RedisClientIdentifier</span><span class="p">())</span> <span class="p">{</span>
             <span class="n">c</span> <span class="k">in</span>
             <span class="k">do</span> <span class="p">{</span>
-                <span class="k">let</span> <span class="nv">client2</span> <span class="o">=</span> <span class="n">try</span> <span class="nf">c</span><span class="p">()</span>
+                <span class="k">let</span> <span class="nv">client2</span> <span class="o">=</span> <span class="k">try</span> <span class="nf">c</span><span class="p">()</span>
                 <span class="n">client1</span><span class="o">.</span><span class="nf">subscribe</span><span class="p">(</span><span class="nv">channels</span><span class="p">:</span> <span class="p">[</span><span class="s">"foo"</span><span class="p">])</span> <span class="p">{</span>
                     <span class="n">response</span> <span class="k">in</span>
                     <span class="n">client2</span><span class="o">.</span><span class="nf">publish</span><span class="p">(</span><span class="nv">channel</span><span class="p">:</span> <span class="s">"foo"</span><span class="p">,</span> <span class="nv">message</span><span class="p">:</span> <span class="o">.</span><span class="nf">string</span><span class="p">(</span><span class="s">"Hello!"</span><span class="p">))</span> <span class="p">{</span>
                         <span class="n">response</span> <span class="k">in</span>
                         <span class="n">client1</span><span class="o">.</span><span class="nf">readPublished</span><span class="p">(</span><span class="nv">timeoutSeconds</span><span class="p">:</span> <span class="mf">5.0</span><span class="p">)</span> <span class="p">{</span>
                             <span class="n">response</span> <span class="k">in</span>
-                            <span class="n">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">array</span><span class="p">(</span><span class="k">let</span> <span class="nv">array</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
+                            <span class="k">guard</span> <span class="k">case</span> <span class="o">.</span><span class="nf">array</span><span class="p">(</span><span class="k">let</span> <span class="nv">array</span><span class="p">)</span> <span class="o">=</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{</span>
                                 <span class="o">...</span>
                                 <span class="k">return</span>
                             <span class="p">}</span>
@@ -176,15 +176,43 @@
                         <span class="p">}</span>
                     <span class="p">}</span>
                 <span class="p">}</span>
-            <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+            <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
                 <span class="o">...</span>
             <span class="p">}</span>
         <span class="p">}</span>
-    <span class="p">}</span> <span class="n">catch</span> <span class="p">{</span>
+    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
         <span class="o">...</span>
     <span class="p">}</span>
 <span class="p">}</span>
 </code></pre>
+<a href='#building' class='anchor' aria-hidden=true><span class="header-anchor"></span></a><h2 id='building'>Building</h2>
+
+<p>Add this project as a dependency in your Package.swift file.</p>
+<pre class="highlight plaintext"><code>.Package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", Version(0,0,0)..&lt;Version(10,0,0))
+</code></pre>
+<a href='#repository-layout' class='anchor' aria-hidden=true><span class="header-anchor"></span></a><h2 id='repository-layout'>Repository Layout</h2>
+
+<p>We have finished refactoring Perfect to support Swift Package Manager. The Perfect project has been split up into the following repositories:</p>
+
+<ul>
+<li><a href="https://github.com/PerfectlySoft/Perfect">Perfect</a> - This repository contains the core PerfectLib and will continue to be the main landing point for the project.</li>
+<li><a href="https://github.com/PerfectlySoft/PerfectTemplate">PerfectTemplate</a> - A simple starter project which compiles with SPM into a stand-alone executable HTTP server. This repository is ideal for starting on your own Perfect based project.</li>
+<li><a href="https://github.com/PerfectlySoft/PerfectDocs">PerfectDocs</a> - Contains all API reference related material.</li>
+<li><a href="https://github.com/PerfectlySoft/PerfectExamples">PerfectExamples</a> - All the Perfect example projects and documentation.</li>
+<li><a href="https://github.com/PerfectlySoft/PerfectEverything">PerfectEverything</a> - This umbrella repository allows one to pull in all the related Perfect modules in one go, including the servers, examples, database connectors and documentation. This is a great place to start for people wishing to get up to speed with Perfect.</li>
+<li><a href="https://github.com/PerfectlySoft/PerfectServer">PerfectServer</a> - Contains the PerfectServer variants, including the stand-alone HTTP and FastCGI servers. Those wishing to do a manual deployment should clone and build from this repository.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-Redis">Perfect-Redis</a> - Redis database connector.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-SQLite">Perfect-SQLite</a> - SQLite3 database connector.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-PostgreSQL">Perfect-PostgreSQL</a> - PostgreSQL database connector.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-MySQL">Perfect-MySQL</a> - MySQL database connector.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-MongoDB">Perfect-MongoDB</a> - MongoDB database connector.</li>
+<li><a href="https://github.com/PerfectlySoft/Perfect-FastCGI-Apache2.4">Perfect-FastCGI-Apache2.4</a> - Apache 2.4 FastCGI module; required for the Perfect FastCGI server variant.</li>
+</ul>
+
+<p>The database connectors are all stand-alone and can be used outside of the Perfect framework and server.</p>
+<a href='#further-information' class='anchor' aria-hidden=true><span class="header-anchor"></span></a><h2 id='further-information'>Further Information</h2>
+
+<p>For more information on the Perfect project, please visit <a href="http://perfect.org">perfect.org</a>.</p>
 
           </div>
         </section>
@@ -194,7 +222,7 @@
     </div>
     <section class="footer">
       <p>© 2016 PerfectlySoft Inc. and the Perfect project authors</p>
-      <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.6.2</a>, a <a class="link" href="http://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+      <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.7.0</a>, a <a class="link" href="http://realm.io" target="_blank" rel="external">Realm</a> project.</p>
     </section>
   </body>
 </div>
