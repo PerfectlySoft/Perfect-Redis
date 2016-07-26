@@ -78,7 +78,7 @@ public enum RedisResponse {
     
     /// Returns true if the response is the Redis standard +OK
     public var isSimpleOK: Bool {
-        guard case .simpleString(let s) = self where s == "OK" else {
+        guard case .simpleString(let s) = self , s == "OK" else {
             return false
         }
         return true
@@ -237,8 +237,8 @@ public class RedisClient {
         
         func toString() -> String {
             switch self {
-            case string(let s): return "\"\(s)\""
-            case binary(let b) : return "\"\(hexString(fromArray: b))\""
+            case .string(let s): return "\"\(s)\""
+            case .binary(let b) : return "\"\(hexString(fromArray: b))\""
             }
         }
     }
@@ -494,17 +494,17 @@ public extension RedisClient {
         
         func toString() -> String {
             switch self {
-            case addr(let ip, let port):
+            case .addr(let ip, let port):
                 return "ADDR \(ip):\(port)"
-            case id(let id):
+            case .id(let id):
                 return "ID \(id)"
-            case typeNormal:
+            case .typeNormal:
                 return "TYPE normal"
-            case typeMaster:
+            case .typeMaster:
                 return "TYPE master"
-            case typeSlave:
+            case .typeSlave:
                 return "TYPE slave"
-            case typePubSub:
+            case .typePubSub:
                 return "TYPE pubsub"
                 
             }
@@ -517,9 +517,9 @@ public extension RedisClient {
         
         func toString() -> String {
             switch self {
-            case on: return "ON"
-            case off: return "OFF"
-            case skip: return "SKIP"
+            case .on: return "ON"
+            case .off: return "OFF"
+            case .skip: return "SKIP"
             }
         }
     }
@@ -681,9 +681,9 @@ public extension RedisClient {
         
         func toString() -> String {
             switch self {
-            case signed(let i):
+            case .signed(let i):
                 return "i\(i)"
-            case unsigned(let i):
+            case .unsigned(let i):
                 return "u\(i)"
             }
         }
@@ -701,19 +701,19 @@ public extension RedisClient {
         
         func toString() -> String {
             switch self {
-            case get(let type, let offset):
+            case .get(let type, let offset):
                 return "GET \(type.toString()) \(offset)"
-            case set(let type, let offset, let value):
+            case .set(let type, let offset, let value):
                 return "SET \(type.toString()) \(offset) \(value)"
-            case setMul(let type, let offset, let value):
+            case .setMul(let type, let offset, let value):
                 return "SET \(type.toString()) #\(offset) \(value)"
-            case incrby(let type, let offset, let increment):
+            case .incrby(let type, let offset, let increment):
                 return "INCRBY \(type.toString()) \(offset) \(increment)"
-            case overflowWrap:
+            case .overflowWrap:
                 return "OVERFLOW WRAP"
-            case overflowSat:
+            case .overflowSat:
                 return "OVERFLOW SAT"
-            case overflowFail:
+            case .overflowFail:
                 return "OVERFLOW FAIL"
             }
         }
@@ -724,10 +724,10 @@ public extension RedisClient {
         case and, or, xor, not
         func toString() -> String {
             switch self {
-            case and: return "AND"
-            case or: return "OR"
-            case xor: return "XOR"
-            case not: return "NOT"
+            case .and: return "AND"
+            case .or: return "OR"
+            case .xor: return "XOR"
+            case .not: return "NOT"
             }
         }
     }

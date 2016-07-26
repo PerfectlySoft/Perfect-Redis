@@ -16,7 +16,7 @@ class PerfectRedisTests: XCTestCase {
     }
     
     func testGetClient() {
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             
@@ -32,13 +32,13 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testPing() {
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -61,13 +61,13 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testFlushAll() {
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -89,13 +89,13 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func save() {
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -117,14 +117,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testSetGet() {
         let (key, value) = ("mykey", "myvalue")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -156,14 +156,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testSetGetXX() {
         let (key, value) = ("mykey", "myvalue")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -178,7 +178,7 @@ class PerfectRedisTests: XCTestCase {
                     client.set(key: key, value: .string(value), ifExists: true) {
                         response in
                         
-                        guard case .bulkString(let bytes) = response where nil == bytes else {
+                        guard case .bulkString(let bytes) = response , nil == bytes else {
                             XCTAssert(false, "Unexpected response \(response)")
                             expectation.fulfill()
                             return
@@ -189,7 +189,7 @@ class PerfectRedisTests: XCTestCase {
                                 RedisClient.releaseClient(client)
                                 expectation.fulfill()
                             }
-                            guard case .bulkString(let bytes) = response where nil == bytes else {
+                            guard case .bulkString(let bytes) = response , nil == bytes else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 return
                             }
@@ -202,14 +202,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testSetGetNX() {
         let (key, value, value2) = ("mykey", "myvalue", "myothervalue")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -241,7 +241,7 @@ class PerfectRedisTests: XCTestCase {
                             client.set(key: key, value: .string(value2), ifNotExists: true) {
                                 response in
                                 
-                                guard case .bulkString(let bytes) = response where nil == bytes else {
+                                guard case .bulkString(let bytes) = response , nil == bytes else {
                                     XCTAssert(false, "Unexpected response \(response)")
                                     expectation.fulfill()
                                     return
@@ -273,14 +273,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testSetGetExp() {
         let (key, value) = ("mykey", "myvalue")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -307,7 +307,7 @@ class PerfectRedisTests: XCTestCase {
                                 RedisClient.releaseClient(client)
                                 expectation.fulfill()
                             }
-                            guard case .bulkString(let bytes) = response where nil == bytes else {
+                            guard case .bulkString(let bytes) = response , nil == bytes else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 return
                             }
@@ -320,14 +320,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testExists() {
         let (key, value, key2, value2) = ("mykey", "myvalue", "mykey2", "myvalue2")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -353,7 +353,7 @@ class PerfectRedisTests: XCTestCase {
                                 RedisClient.releaseClient(client)
                                 expectation.fulfill()
                             }
-                            guard case .integer(let i) = response where i == 2 else {
+                            guard case .integer(let i) = response , i == 2 else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 return
                             }
@@ -366,14 +366,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testAppend() {
         let (key, value) = ("mykey", "myvalue")
-        let expectation = self.expectation(withDescription: "RedisClient")
+        let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
             do {
@@ -395,7 +395,7 @@ class PerfectRedisTests: XCTestCase {
                         XCTAssert(s == value, "Unexpected response \(response)")
                         client.append(key: key, value: .string(value)) {
                             response in
-                            guard case .integer(let i) = response where i == value.characters.count*2 else {
+                            guard case .integer(let i) = response , i == value.characters.count*2 else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 expectation.fulfill()
                                 return
@@ -422,14 +422,14 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
     
     func testPubSub() {
-        let expectation1 = self.expectation(withDescription: "RedisClient1")
-        let expectation2 = self.expectation(withDescription: "RedisClient2")
+        let expectation1 = self.expectation(description: "RedisClient1")
+        let expectation2 = self.expectation(description: "RedisClient2")
         RedisClient.getClient(withIdentifier: self.clientIdentifier()) {
             c in
             do {
@@ -473,7 +473,7 @@ class PerfectRedisTests: XCTestCase {
                 return
             }
         }
-        self.waitForExpectations(withTimeout: 60.0) {
+        self.waitForExpectations(timeout: 60.0) {
             _ in
         }
     }
