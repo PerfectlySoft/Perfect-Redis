@@ -35,9 +35,9 @@ extension UInt8 {
     var hexString: String {
         var s = ""
         let b = self >> 4
-        s.append(UnicodeScalar(b > 9 ? b - 10 + 65 : b + 48))
+        s.append(String(Character(UnicodeScalar(b > 9 ? b - 10 + 65 : b + 48))))
         let b2 = self & 0x0F
-        s.append(UnicodeScalar(b2 > 9 ? b2 - 10 + 65 : b2 + 48))
+        s.append(String(Character(UnicodeScalar(b2 > 9 ? b2 - 10 + 65 : b2 + 48))))
         return s
     }
 }
@@ -45,11 +45,11 @@ extension UInt8 {
 extension Array where Element: UnsignedInteger {
     var nullTerminatedPointer: UnsafePointer<CChar> {
         if self.last == 0 {
-            return UnsafePointer<CChar>(self)
+			return UnsafePointer(UnsafeMutableRawPointer(mutating: self).assumingMemoryBound(to: CChar.self))
         }
         var ary = self
         ary.append(0)
-        return UnsafePointer<CChar>(ary)
+        return UnsafePointer(UnsafeMutableRawPointer(mutating: ary).assumingMemoryBound(to: CChar.self))
     }
     
     var string: String {
@@ -62,9 +62,9 @@ private func hexString(fromArray: [UInt8]) -> String {
     for v in fromArray {
         s.append("\\x")
         let b = v >> 4
-        s.append(UnicodeScalar(b > 9 ? b - 10 + 65 : b + 48))
+        s.append(String(Character(UnicodeScalar(b > 9 ? b - 10 + 65 : b + 48))))
         let b2 = v & 0x0F
-        s.append(UnicodeScalar(b2 > 9 ? b2 - 10 + 65 : b2 + 48))
+        s.append(String(Character(UnicodeScalar(b2 > 9 ? b2 - 10 + 65 : b2 + 48))))
     }
     return s
 }
@@ -134,7 +134,7 @@ public enum RedisResponse {
         }
     }
     
-    static func readResponse(client: RedisClient, timeoutSeconds: Double, callback: (RedisResponse) -> ()) {
+    static func readResponse(client: RedisClient, timeoutSeconds: Double, callback: @escaping (RedisResponse) -> ()) {
         if let line = client.pullLineFromBuffer() {
             let endIndex = line.endIndex
             let id = line[0]
@@ -187,7 +187,7 @@ public enum RedisResponse {
         }
     }
     
-    static func readElements(client: RedisClient, count: Int, into: [RedisResponse], arrayCallback: (RedisResponse) -> ()) {
+    static func readElements(client: RedisClient, count: Int, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
         if count == 0 {
             return arrayCallback(.array(into))
         }
@@ -219,7 +219,7 @@ public struct RedisClientIdentifier {
         self.netGenerator = { return NetTCP() }
     }
     
-    public init(withHost: String, port: Int, password: String = "", netGenerator: () -> NetTCP = { return NetTCP() }) {
+    public init(withHost: String, port: Int, password: String = "", netGenerator: @escaping () -> NetTCP = { return NetTCP() }) {
         self.host = withHost
         self.port = port
         self.password = password
@@ -243,7 +243,7 @@ public class RedisClient {
         }
     }
     
-    public static func getClient(withIdentifier: RedisClientIdentifier, callback: (() throws -> RedisClient) -> ()) {
+    public static func getClient(withIdentifier: RedisClientIdentifier, callback: @escaping (() throws -> RedisClient) -> ()) {
         // !FIX! would look in cache here
         let net = withIdentifier.netGenerator()
         do {
@@ -343,7 +343,7 @@ public class RedisClient {
     }
     
     // pull the request number of bytes from the buffer
-    func extractBytesFromBuffer(size: Int, callback: ([UInt8]?) -> ()) {
+    func extractBytesFromBuffer(size: Int, callback: @escaping ([UInt8]?) -> ()) {
         if self.availableBufferedBytes >= size {
             let ary = Array(self.readBuffer[self.readBufferOffset..<self.readBufferOffset+size])
             self.readBufferOffset += size
@@ -396,7 +396,7 @@ public class RedisClient {
     }
     
     // bool indicates that at least one byte was read before timing out
-    func fillBuffer(timeoutSeconds: Double, callback: (Bool) -> ()) {
+    func fillBuffer(timeoutSeconds: Double, callback: @escaping (Bool) -> ()) {
         self.net.readSomeBytes(count: redisDefaultReadSize) {
             readBytes in
             guard let readBytes = readBytes else {
@@ -1033,7 +1033,7 @@ public extension RedisClient {
     /// Scans the set `key` given the current cursor, which should start from zero.
     /// Optionally accepts a pattern and a maximum returned value count.
     func setScan(key: String, cursor: Int = 0, pattern: String? = nil, count: Int? = nil, callback: redisResponseCallback) {
-        self.sendCommand(name: "SSCAN \(key) \(cursor) \(pattern ?? "") \(nil == count ? "" : String(count))", callback: callback)
+        self.sendCommand(name: "SSCAN \(key) \(cursor) \(pattern ?? "") \(nil == count ? "" : String(count!))", callback: callback)
     }
 }
 
