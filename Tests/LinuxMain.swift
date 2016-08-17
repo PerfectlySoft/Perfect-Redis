@@ -1,5 +1,5 @@
 import XCTest
-@testable import PerfectRedisTestSuite
+@testable import PerfectRedisTests
 
 XCTMain([
      testCase(PerfectRedisTests.allTests)
