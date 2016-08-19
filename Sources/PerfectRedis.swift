@@ -314,19 +314,19 @@ public class RedisClient {
         return self.appendCRLF(to: name.bytes)
     }
     
-    func sendCommand(name: String, parameters: [RedisResponse], callback: redisResponseCallback) {
+    func sendCommand(name: String, parameters: [RedisResponse], callback: @escaping redisResponseCallback) {
         let a = self.commandBytes(name: name, parameters: parameters)
         self.sendRawCommand(bytes: a, callback: callback)
     }
     
-    func sendCommand(name: String, callback: redisResponseCallback) {
+    func sendCommand(name: String, callback: @escaping redisResponseCallback) {
         let a = self.commandBytes(name: name)
         self.sendRawCommand(bytes: a, callback: callback)
     }
     
     // sends the bytes to trhe client
     // reads response when the bytes have been sent
-    func sendRawCommand(bytes: [UInt8], callback: redisResponseCallback) {
+    func sendRawCommand(bytes: [UInt8], callback: @escaping redisResponseCallback) {
         self.net.write(bytes: bytes) {
             wrote in
             
@@ -338,7 +338,7 @@ public class RedisClient {
         }
     }
     
-    func readResponse(callback: redisResponseCallback) {
+    func readResponse(callback: @escaping redisResponseCallback) {
         RedisResponse.readResponse(client: self, timeoutSeconds: redisNetTimeout, callback: callback)
     }
     
@@ -424,12 +424,12 @@ public class RedisClient {
 public extension RedisClient {
     
     /// Authorize with password
-    func auth(withPassword: String, callback: redisResponseCallback) {
+    func auth(withPassword: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "AUTH \(withPassword)", callback: callback)
     }
     
     /// Ping the server
-    func ping(callback: redisResponseCallback) {
+    func ping(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PING", callback: callback)
     }
 }
@@ -438,47 +438,47 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Flush all keys.
-    func flushAll(callback: redisResponseCallback) {
+    func flushAll(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "FLUSHALL", callback: callback)
     }
     
     /// Save the database sync.
-    func save(callback: redisResponseCallback) {
+    func save(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SAVE", callback: callback)
     }
     
     /// Save the database async.
-    func backgroundSave(callback: redisResponseCallback) {
+    func backgroundSave(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BGSAVE", callback: callback)
     }
     
     /// Timestamp of the last save.
-    func lastSave(callback: redisResponseCallback) {
+    func lastSave(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LASTSAVE", callback: callback)
     }
     
     /// Timestamp of the last save.
-    func rewriteAppendOnlyFile(callback: redisResponseCallback) {
+    func rewriteAppendOnlyFile(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BGREWRITEAOF", callback: callback)
     }
     
     /// Number of keys in the database.
-    func dbSize(callback: redisResponseCallback) {
+    func dbSize(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "DBSIZE", callback: callback)
     }
     
     /// Returns the keys matching pattern.
-    func keys(pattern: String, callback: redisResponseCallback) {
+    func keys(pattern: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "KEYS \(pattern)", callback: callback)
     }
     
     /// Returns a random key from the database.
-    func randomKey(callback: redisResponseCallback) {
+    func randomKey(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RANDOMKEY", callback: callback)
     }
     
     /// Select the database at index.
-    func select(index: Int, callback: redisResponseCallback) {
+    func select(index: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SELECT \(index)", callback: callback)
     }
 }
@@ -525,32 +525,32 @@ public extension RedisClient {
     }
     
     /// List connected clients.
-    func clientList(callback: redisResponseCallback) {
+    func clientList(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT LIST", callback: callback)
     }
     
     /// Get the name of the connected client.
-    func clientGetName(callback: redisResponseCallback) {
+    func clientGetName(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT GETNAME", callback: callback)
     }
     
     /// Set the name of the connected client.
-    func clientSetName(to: String, callback: redisResponseCallback) {
+    func clientSetName(to: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT SETNAME \(to)", callback: callback)
     }
     
     /// Kill the indicated client connection(s).
-    func clientKill(filters: [KillFilter], skipMe: Bool = true, callback: redisResponseCallback) {
+    func clientKill(filters: [KillFilter], skipMe: Bool = true, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT KILL \(filters.map { $0.toString() }.joined(separator: " ")) SKIPME \(skipMe ? "yes" : "no")", callback: callback)
     }
     
     /// Pause all client activity for the indicated timeout.
-    func clientPause(timeoutSeconds: Double, callback: redisResponseCallback) {
+    func clientPause(timeoutSeconds: Double, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT PAUSE \(Int(timeoutSeconds * 1000))", callback: callback)
     }
     
     /// Adjust client replies.
-    func clientReply(type: ReplyType, callback: redisResponseCallback) {
+    func clientReply(type: ReplyType, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "CLIENT REPLY \(type.toString())", callback: callback)
     }
 }
@@ -559,7 +559,7 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Set the key to the String value with an optional expiration.
-    func set(key: String, value: RedisValue, expires: Double = 0.0, ifNotExists: Bool = false, ifExists: Bool = false, callback: redisResponseCallback) {
+    func set(key: String, value: RedisValue, expires: Double = 0.0, ifNotExists: Bool = false, ifExists: Bool = false, callback: @escaping redisResponseCallback) {
         var options = ""
         if expires != 0.0 {
             options += " PX \(Int(expires * 1000))"
@@ -573,72 +573,72 @@ public extension RedisClient {
     }
     
     /// Set the keys/values.
-    func set(keysValues: [(String, RedisValue)], callback: redisResponseCallback) {
+    func set(keysValues: [(String, RedisValue)], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "MSET \(keysValues.map { "\($0.0) \($0.1.toString())" }.joined(separator: " "))", callback: callback)
     }
     
     /// Set the keys/values.
-    func setIfNonExists(keysValues: [(String, RedisValue)], callback: redisResponseCallback) {
+    func setIfNonExists(keysValues: [(String, RedisValue)], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "MSETNX \(keysValues.map { "\($0.0) \($0.1.toString())" }.joined(separator: " "))", callback: callback)
     }
     
     /// Get the key value.
-    func get(key: String, callback: redisResponseCallback) {
+    func get(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "GET \(key)", callback: callback)
     }
     
     /// Get the keys values.
-    func get(keys: [String], callback: redisResponseCallback) {
+    func get(keys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "MGET \(keys.joined(separator: " "))", callback: callback)
     }
     
     /// Get the key value and set to new value.
-    func getSet(key: String, newValue: RedisValue, callback: redisResponseCallback) {
+    func getSet(key: String, newValue: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "GETSET \(key) \(newValue.toString())", callback: callback)
     }
     
     /// Get the key value.
-    func delete(keys: String..., callback: redisResponseCallback) {
+    func delete(keys: String..., callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "DEL \(keys.joined(separator: " "))", callback: callback)
     }
     
     /// Increment the key value.
-    func increment(key: String, callback: redisResponseCallback) {
+    func increment(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "INCR \(key)", callback: callback)
     }
     
     /// Increment the key value.
-    func increment(key: String, by: Int, callback: redisResponseCallback) {
+    func increment(key: String, by: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "INCRBY \(key) \(by)", callback: callback)
     }
     
     /// Increment the key value.
-    func increment(key: String, by: Double, callback: redisResponseCallback) {
+    func increment(key: String, by: Double, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "INCRBYFLOAT \(key) \(by)", callback: callback)
     }
     
     /// Decrement the key value.
-    func decrement(key: String, callback: redisResponseCallback) {
+    func decrement(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "DECR \(key)", callback: callback)
     }
     
     /// Increment the key value.
-    func decrement(key: String, by: Int, callback: redisResponseCallback) {
+    func decrement(key: String, by: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "DECRBY \(key) \(by)", callback: callback)
     }
     
     /// Rename a key.
-    func rename(key: String, newKey: String, callback: redisResponseCallback) {
+    func rename(key: String, newKey: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RENAME \(key) \(newKey)", callback: callback)
     }
     
     /// Rename a key if new name does not exist.
-    func renameIfnotExists(key: String, newKey: String, callback: redisResponseCallback) {
+    func renameIfnotExists(key: String, newKey: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RENAMENX \(key) \(newKey)", callback: callback)
     }
     
     /// Check if the indicated keys exist.
-    func exists(keys: String..., callback: redisResponseCallback) {
+    func exists(keys: String..., callback: @escaping redisResponseCallback) {
         guard keys.count > 0 else {
             return callback(.array([RedisResponse]()))
         }
@@ -646,27 +646,27 @@ public extension RedisClient {
     }
     
     /// Append a value to the key.
-    func append(key: String, value: RedisValue, callback: redisResponseCallback) {
+    func append(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "APPEND \(key) \(value.toString())", callback: callback)
     }
     
     /// Set the expiration for the indicated key.
-    func expire(key: String, seconds: Double, callback: redisResponseCallback) {
+    func expire(key: String, seconds: Double, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PEXPIRE \(key) \(Int(seconds * 1000))", callback: callback)
     }
     
     /// Set the expiration for the indicated key.
-    func expireAt(key: String, seconds: Double, callback: redisResponseCallback) {
+    func expireAt(key: String, seconds: Double, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PEXPIREAT \(key) \(Int(seconds * 1000))", callback: callback)
     }
     
     /// Returns the expiration in milliseconds for the indicated key.
-    func timeToExpire(key: String, callback: redisResponseCallback) {
+    func timeToExpire(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PTTL \(key)", callback: callback)
     }
     
     /// Remove the expiration for the indicated key.
-    func persist(key: String, callback: redisResponseCallback) {
+    func persist(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PERSIST \(key)", callback: callback)
     }
 }
@@ -733,47 +733,47 @@ public extension RedisClient {
     }
     
     /// Count the set bits in a value.
-    func bitCount(key: String, callback: redisResponseCallback) {
+    func bitCount(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITCOUNT \(key)", callback: callback)
     }
     
     /// Count the set bits in a value.
-    func bitCount(key: String, start: Int, end: Int, callback: redisResponseCallback) {
+    func bitCount(key: String, start: Int, end: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITCOUNT \(key) \(start) \(end)", callback: callback)
     }
     
     /// Perform a bitfield operation on a value
-    func bitField(key: String, commands: [SubCommand], callback: redisResponseCallback) {
+    func bitField(key: String, commands: [SubCommand], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITFIELD \(key) \(commands.map { $0.toString() }.joined(separator: " "))", callback: callback)
     }
     
     /// Perform a bitfield operation on a value.
-    func bitOp(_ op: BitOperation, destKey: String, srcKeys: String..., callback: redisResponseCallback) {
+    func bitOp(_ op: BitOperation, destKey: String, srcKeys: String..., callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITOP \(op.toString()) \(destKey) \(srcKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Perform a bitpos operation.
-    func bitPos(key: String, position: Int, callback: redisResponseCallback) {
+    func bitPos(key: String, position: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITPOS \(key) \(position))", callback: callback)
     }
     
     /// Perform a bitpos operation on a range.
-    func bitPos(key: String, position: Int, start: Int, callback: redisResponseCallback) {
+    func bitPos(key: String, position: Int, start: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITPOS \(key) \(position) \(start))", callback: callback)
     }
     
     /// Perform a bitpos operation on a range.
-    func bitPos(key: String, position: Int, start: Int, end: Int, callback: redisResponseCallback) {
+    func bitPos(key: String, position: Int, start: Int, end: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BITPOS \(key) \(position) \(start) \(end))", callback: callback)
     }
     
     /// Get the bit at the indicated offset.
-    func bitGet(key: String, offset: Int, callback: redisResponseCallback) {
+    func bitGet(key: String, offset: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "GETBIT \(key) \(offset))", callback: callback)
     }
     
     /// Set the bit at the indicated offset.
-    func bitSet(key: String, offset: Int, value: Bool, callback: redisResponseCallback) {
+    func bitSet(key: String, offset: Int, value: Bool, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SETBIT \(key) \(offset) \(value ? 1 : 0))", callback: callback)
     }
 }
@@ -782,97 +782,97 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Push values to the beginning of the list
-    func listPrepend(key: String, values: [RedisValue], callback: redisResponseCallback) {
+    func listPrepend(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LPUSH \(key) \(values.map { $0.toString() }.joined(separator: " "))", callback: callback)
     }
     
     /// Push values to the end of the list
-    func listAppend(key: String, values: [RedisValue], callback: redisResponseCallback) {
+    func listAppend(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RPUSH \(key) \(values.map { $0.toString() }.joined(separator: " "))", callback: callback)
     }
     
     /// Push value to the beginning of the list. LPUSHX
-    func listPrependX(key: String, value: RedisValue, callback: redisResponseCallback) {
+    func listPrependX(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LPUSHX \(key) \(value.toString())", callback: callback)
     }
     
     /// Push value to the end of the list. RPUSHX
-    func listAppendX(key: String, value: RedisValue, callback: redisResponseCallback) {
+    func listAppendX(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RPUSHX \(key) \(value.toString())", callback: callback)
     }
     
     /// Pop and return the first element from the list
-    func listPopFirst(key: String, callback: redisResponseCallback) {
+    func listPopFirst(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LPOP \(key)", callback: callback)
     }
     
     /// Pop and return the last element from the list
-    func listPopLast(key: String, callback: redisResponseCallback) {
+    func listPopLast(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RPOP \(key)", callback: callback)
     }
     
     /// Pop and return the first element from the list
-    func listPopFirstAppend(key: String, callback: redisResponseCallback) {
+    func listPopFirstAppend(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LPOP \(key)", callback: callback)
     }
     
     /// Pop and return the last element from the list. Append the element to the destination list.
-    func listPopLastAppend(sourceKey: String, destKey: String, callback: redisResponseCallback) {
+    func listPopLastAppend(sourceKey: String, destKey: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "RPOPLPUSH \(sourceKey) \(destKey)", callback: callback)
     }
     
     /// Pop and return the last element from the list. Append the element to the destination list.
-    func listPopLastAppendBlocking(sourceKey: String, destKey: String, callback: redisResponseCallback) {
+    func listPopLastAppendBlocking(sourceKey: String, destKey: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BRPOPLPUSH \(sourceKey) \(destKey)", callback: callback)
     }
     
     /// Pop and return the first element from the list
-    func listPopFirstBlocking(keys: String..., timeout: Int, callback: redisResponseCallback) {
+    func listPopFirstBlocking(keys: String..., timeout: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BLPOP \(keys.joined(separator: " ")) \(timeout)", callback: callback)
     }
     
     /// Pop and return the last element from the list
-    func listPopLastBlocking(keys: String..., timeout: Int, callback: redisResponseCallback) {
+    func listPopLastBlocking(keys: String..., timeout: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "BRPOP \(keys.joined(separator: " ")) \(timeout)", callback: callback)
     }
     
     /// The length of the list
-    func listLength(key: String, callback: redisResponseCallback) {
+    func listLength(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LLEN \(key)", callback: callback)
     }
     
     /// Remove the items in the range
-    func listTrim(key: String, start: Int, stop: Int, callback: redisResponseCallback) {
+    func listTrim(key: String, start: Int, stop: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LTRIM \(key) \(start) \(stop)", callback: callback)
     }
     
     /// Returns the list items in the indicated range
-    func listRange(key: String, start: Int, stop: Int, callback: redisResponseCallback) {
+    func listRange(key: String, start: Int, stop: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LRANGE \(key) \(start) \(stop)", callback: callback)
     }
     
     /// Returns the list item at the indicated offset.
-    func listGetElement(key: String, index: Int, callback: redisResponseCallback) {
+    func listGetElement(key: String, index: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LINDEX \(key) \(index)", callback: callback)
     }
     
     /// Inserts the new item before the indicated value.
-    func listInsert(key: String, element: RedisValue, before: RedisValue, callback: redisResponseCallback) {
+    func listInsert(key: String, element: RedisValue, before: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LINSERT \(key) BEFORE \(before.toString())", callback: callback)
     }
     
     /// Inserts the new item after the indicated value.
-    func listInsert(key: String, element: RedisValue, after: RedisValue, callback: redisResponseCallback) {
+    func listInsert(key: String, element: RedisValue, after: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LINSERT \(key) AFTER \(after.toString())", callback: callback)
     }
     
     /// Set the item at index to value.
-    func listSet(key: String, index: Int, value: RedisValue, callback: redisResponseCallback) {
+    func listSet(key: String, index: Int, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LSET \(key) \(index) \(value.toString())", callback: callback)
     }
     
     /// Remove the first N elements matching value.
-    func listRemoveMatching(key: String, value: RedisValue, count: Int, callback: redisResponseCallback) {
+    func listRemoveMatching(key: String, value: RedisValue, count: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "LREM \(key) \(count) \(value.toString())", callback: callback)
     }
     
@@ -882,27 +882,27 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Begin a transaction.
-    func multiBegin(callback: redisResponseCallback) {
+    func multiBegin(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "MULTI", callback: callback)
     }
     
     /// Execute a transation.
-    func multiExec(callback: redisResponseCallback) {
+    func multiExec(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "EXEC", callback: callback)
     }
     
     /// Discard a transaction.
-    func multiDiscard(callback: redisResponseCallback) {
+    func multiDiscard(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "DISCARD", callback: callback)
     }
     
     /// Watch keys for modification during a transaction.
-    func multiWatch(keys: [String], callback: redisResponseCallback) {
+    func multiWatch(keys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "WATCH \(keys.joined(separator: " "))", callback: callback)
     }
     
     /// Unwatch keys for modification during a transaction.
-    func multiUnwatch(callback: redisResponseCallback) {
+    func multiUnwatch(callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "UNWATCH", callback: callback)
     }
 }
@@ -911,31 +911,31 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Subscribe to the following patterns.
-    func subscribe(patterns: [String], callback: redisResponseCallback) {
+    func subscribe(patterns: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PSUBSCRIBE \(patterns.joined(separator: " "))", callback: callback)
     }
     /// Subscribe to the following channels.
-    func subscribe(channels: [String], callback: redisResponseCallback) {
+    func subscribe(channels: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SUBSCRIBE \(channels.joined(separator: " "))", callback: callback)
     }
     
     /// Unsubscribe to the following patterns.
-    func unsubscribe(patterns: [String], callback: redisResponseCallback) {
+    func unsubscribe(patterns: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PUNSUBSCRIBE \(patterns.joined(separator: " "))", callback: callback)
     }
     
     /// Unsubscribe to the following channels.
-    func unsubscribe(channels: [String], callback: redisResponseCallback) {
+    func unsubscribe(channels: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "UNSUBSCRIBE \(channels.joined(separator: " "))", callback: callback)
     }
     
     /// Publish a message to the channel.
-    func publish(channel: String, message: RedisValue, callback: redisResponseCallback) {
+    func publish(channel: String, message: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "PUBLISH \(channel) \(message.toString())", callback: callback)
     }
     
     /// Read a published message given a timeout.
-    func readPublished(timeoutSeconds: Double, callback: redisResponseCallback) {
+    func readPublished(timeoutSeconds: Double, callback: @escaping redisResponseCallback) {
         RedisResponse.readResponse(client: self, timeoutSeconds: timeoutSeconds, callback: callback)
     }
     
@@ -946,93 +946,93 @@ public extension RedisClient {
 public extension RedisClient {
     
     /// Inserts the new elements into the set.
-    func setAdd(key: String, elements: [RedisValue], callback: redisResponseCallback) {
+    func setAdd(key: String, elements: [RedisValue], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SADD \(key) \(elements.map { $0.toString() }.joined(separator: " "))", callback: callback)
     }
     
     /// Returns the number of elements in the set.
-    func setCount(key: String, callback: redisResponseCallback) {
+    func setCount(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SCARD \(key)", callback: callback)
     }
     
     /// Returns the difference between `key` and `againstKeys`.
-    func setDifference(key: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setDifference(key: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SDIFF \(key) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Stores to `into` the difference between `ofKey` and `againstKeys`.
-    func setStoreDifference(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setStoreDifference(into: String, ofKey: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SDIFFSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Returns the intersection of `key` and `againstKeys`.
-    func setIntersection(key: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setIntersection(key: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SINTER \(key) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Stores to `into` the intersection of `ofKey` and `againstKeys`.
-    func setStoreIntersection(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setStoreIntersection(into: String, ofKey: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SINTERSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Returns the union of `key` and `againstKeys`.
-    func setUnion(key: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setUnion(key: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SUNION \(key) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Stores to `into` the union of `ofKey` and `againstKeys`.
-    func setStoreUnion(into: String, ofKey: String, againstKeys: [String], callback: redisResponseCallback) {
+    func setStoreUnion(into: String, ofKey: String, againstKeys: [String], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SUNIONSTORE \(into) \(ofKey) \(againstKeys.joined(separator: " "))", callback: callback)
     }
     
     /// Checks if the set `key` contains `value`.
-    func setContains(key: String, value: RedisValue, callback: redisResponseCallback) {
+    func setContains(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SISMEMBER \(key) \(value.toString())", callback: callback)
     }
     
     /// Returns the members of set `key`.
-    func setMembers(key: String, callback: redisResponseCallback) {
+    func setMembers(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SMEMBERS \(key)", callback: callback)
     }
     
     /// Moves the set `value` `fromKey` to `toKey`.
-    func setMove(fromKey: String, toKey: String, value: RedisValue, callback: redisResponseCallback) {
+    func setMove(fromKey: String, toKey: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.toString())", callback: callback)
     }
     
     /// Removes and returns `count` random elements of set `key`.
-    func setRandomPop(key: String, count: Int, callback: redisResponseCallback) {
+    func setRandomPop(key: String, count: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SPOP \(key) \(count)", callback: callback)
     }
     
     /// Removes and returns a random element of set `key`.
-    func setRandomPop(key: String, callback: redisResponseCallback) {
+    func setRandomPop(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SPOP \(key)", callback: callback)
     }
     
     /// Returns `count` random elements of set `key`.
-    func setRandomGet(key: String, count: Int, callback: redisResponseCallback) {
+    func setRandomGet(key: String, count: Int, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SRANDMEMBER \(key) \(count)", callback: callback)
     }
     
     /// Returns a random element of set `key`.
-    func setRandomGet(key: String, callback: redisResponseCallback) {
+    func setRandomGet(key: String, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SRANDMEMBER \(key)", callback: callback)
     }
     
     /// Removes the value from set `key`.
-    func setRemove(key: String, value: RedisValue, callback: redisResponseCallback) {
+    func setRemove(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SREM \(key) \(value.toString())", callback: callback)
     }
     
     /// Removes the values from set `key`.
-    func setRemove(key: String, values: [RedisValue], callback: redisResponseCallback) {
+    func setRemove(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SREM \(key) \(values.map { $0.toString() }.joined(separator: " "))", callback: callback)
     }
     
     /// Scans the set `key` given the current cursor, which should start from zero.
     /// Optionally accepts a pattern and a maximum returned value count.
-    func setScan(key: String, cursor: Int = 0, pattern: String? = nil, count: Int? = nil, callback: redisResponseCallback) {
+    func setScan(key: String, cursor: Int = 0, pattern: String? = nil, count: Int? = nil, callback: @escaping redisResponseCallback) {
         self.sendCommand(name: "SSCAN \(key) \(cursor) \(pattern ?? "") \(nil == count ? "" : String(count!))", callback: callback)
     }
 }
