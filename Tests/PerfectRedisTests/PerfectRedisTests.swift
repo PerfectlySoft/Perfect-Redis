@@ -480,7 +480,16 @@ class PerfectRedisTests: XCTestCase {
     
     static var allTests : [(String, (PerfectRedisTests) -> () throws -> Void)] {
         return [
-            ("testPing", testPing)
+            ("testPing", testPing),
+            ("testPubSub", testPubSub),
+            ("testGetClient", testGetClient),
+            ("testFlushAll", testFlushAll),
+            ("testAppend", testAppend),
+            ("testSetGet", testSetGet),
+            ("testExists", testExists),
+            ("testSetGetXX", testSetGetXX),
+            ("testSetGetNX", testSetGetNX),
+            ("testSetGetExp", testSetGetExp)
         ]
     }
 }
