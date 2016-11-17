@@ -64,3 +64,4 @@ fastlane/screenshots
 
 Packages/
 PerfectRedis.xcodeproj/
+.DS_Store
