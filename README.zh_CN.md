@@ -1,4 +1,4 @@
-# Perfect-Redis [简体中文](README.zh_CN.md)
+# Perfect-Redis [English](README.md)
 
 <p align="center">
     <a href="http://perfect.org/get-involved.html" target="_blank">
@@ -39,19 +39,19 @@
     </a>
 </p>
 
-Redis client support for Perfect
+Redis 数据库连接器 - Perfect 软件框架
 
-## Issues
+### 问题报告、内容贡献和客户支持
 
-We are transitioning to using JIRA for all bugs and support related issues, therefore the GitHub issues has been disabled.
+我们目前正在过渡到使用JIRA来处理所有源代码资源合并申请、修复漏洞以及其它有关问题。因此，GitHub 的“issues”问题报告功能已经被禁用了。
 
-If you find a mistake, bug, or any other helpful suggestion you'd like to make on the docs please head over to [http://jira.perfect.org:8080/servicedesk/customer/portal/1](http://jira.perfect.org:8080/servicedesk/customer/portal/1) and raise it.
+如果您发现了问题，或者希望为改进本文提供意见和建议，[请在这里指出](http://jira.perfect.org:8080/servicedesk/customer/portal/1).
 
-A comprehensive list of open issues can be found at [http://jira.perfect.org:8080/projects/ISS/issues](http://jira.perfect.org:8080/projects/ISS/issues)
+在您开始之前，请参阅[目前待解决的问题清单](http://jira.perfect.org:8080/projects/ISS/issues).
 
-## Quick Start
+## 快速上手
 
-Get a redis client with defaults:
+通过默认参数获得Redis连接：
 
 ```swift
 RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
@@ -65,7 +65,7 @@ RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
 }
 ```
 
-Ping the server:
+测试数据库连接效果：
 
 ```swift
 client.ping {
@@ -77,11 +77,11 @@ client.ping {
 		...
 		return
 	}
-	XCTAssert(s == "PONG", "Unexpected response \(response)")
+	XCTAssert(s == "PONG", "响应无效： \(response)")
 }
 ```
 
-Set/get a value:
+设置变量和值
 
 ```swift
 let (key, value) = ("mykey", "myvalue")
@@ -101,12 +101,12 @@ client.set(key: key, value: .string(value)) {
 			return
 		}
 		let s = response.toString()
-		XCTAssert(s == value, "Unexpected response \(response)")
+		XCTAssert(s == value, "响应无效： \(response)")
 	}
 }
 ```
 
-Pub/sub:
+发布/订阅：
 
 ```swift
 RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
@@ -144,9 +144,9 @@ RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
 }
 ```
 
-## Building
+## 编译
 
-Add this project as a dependency in your Package.swift file.
+请在Package.swift 文件中增加依存关系：
 
 ```
 .Package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", Version(0,0,0)..<Version(10,0,0))
@@ -154,5 +154,5 @@ Add this project as a dependency in your Package.swift file.
 
 
 
-## Further Information
-For more information on the Perfect project, please visit [perfect.org](http://perfect.org).
+## 更多信息：
+关于本项目更多信息，请参考Perfect 官网：[perfect.org](http://perfect.org).
