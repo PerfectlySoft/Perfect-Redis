@@ -222,11 +222,6 @@ class HashTests: XCTestCase {
                 let client = try c()
                 client.hashSet(key: key, fieldsValues: hashFieldsValues) {
                     response in
-                    defer {
-                        RedisClient.releaseClient(client)
-                        expectation.fulfill()
-                    }
-
                     client.hashKeys(key: key) {
                         response in
                         switch response {
@@ -236,26 +231,28 @@ class HashTests: XCTestCase {
                             default:
                                 XCTFail("Unexpected response \(response)")
                         }
-                    }
-                    client.hashValues(key: key) {
-                        response in
-                        switch response {
-                            case .array(let a):
-                                let resultArray: [String] = a.map { return $0.toString()! }
-                                XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-                    }
-                    client.hashLength(key: key) {
-                        response in
-                        switch response {
-                            case .integer(let len):
-                                XCTAssertEqual(expectedLength, len, "Unexpected integer returned \(len)")
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-                    }
+						client.hashValues(key: key) {
+							response in
+							switch response {
+								case .array(let a):
+									let resultArray: [String] = a.map { return $0.toString()! }
+									XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
+								default:
+									XCTFail("Unexpected response \(response)")
+							}
+							client.hashLength(key: key) {
+								response in
+								switch response {
+									case .integer(let len):
+										XCTAssertEqual(expectedLength, len, "Unexpected integer returned \(len)")
+									default:
+										XCTFail("Unexpected response \(response)")
+								}
+								RedisClient.releaseClient(client)
+								expectation.fulfill()
+							}
+						}
+					}
                 }
             } catch {
                 XCTFail("Could not connect to server \(error)")
