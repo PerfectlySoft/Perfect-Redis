@@ -235,7 +235,7 @@ public class RedisClient {
         case string(String)
         case binary([UInt8])
 
-        func toString() -> String {
+        public func toString() -> String {
             switch self {
             case .string(let s): return "\"\(s)\""
             case .binary(let b) : return "\"\(hexString(fromArray: b))\""
@@ -283,8 +283,8 @@ public class RedisClient {
     var availableBufferedBytes: Int {
         return self.readBuffer.count - self.readBufferOffset
     }
-
-    init(net: NetTCP) {
+    
+    public init(net: NetTCP) {
         self.net = net
     }
 
@@ -314,12 +314,12 @@ public class RedisClient {
         return self.appendCRLF(to: name.bytes)
     }
 
-    func sendCommand(name: String, parameters: [RedisResponse], callback: @escaping redisResponseCallback) {
+    public func sendCommand(name: String, parameters: [RedisResponse], callback: @escaping redisResponseCallback) {
         let a = self.commandBytes(name: name, parameters: parameters)
         self.sendRawCommand(bytes: a, callback: callback)
     }
 
-    func sendCommand(name: String, callback: @escaping redisResponseCallback) {
+    public func sendCommand(name: String, callback: @escaping redisResponseCallback) {
         let a = self.commandBytes(name: name)
         self.sendRawCommand(bytes: a, callback: callback)
     }
