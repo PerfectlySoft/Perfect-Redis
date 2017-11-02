@@ -397,7 +397,7 @@ class HashTests: XCTestCase {
                             }
 
                             let result = Double(response.toString()!)!
-                            XCTAssertEqualWithAccuracy(1.5, result, accuracy: 0.1, "Unexpected response \(response)")
+							XCTAssertEqual(1.5, result, accuracy: 0.1, "Unexpected response \(response)")
                         }
                     }
                 }

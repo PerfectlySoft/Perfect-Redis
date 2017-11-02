@@ -395,7 +395,7 @@ class PerfectRedisTests: XCTestCase {
                         XCTAssert(s == value, "Unexpected response \(response)")
                         client.append(key: key, value: .string(value)) {
                             response in
-                            guard case .integer(let i) = response , i == value.characters.count*2 else {
+                            guard case .integer(let i) = response , i == value.count*2 else {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 expectation.fulfill()
                                 return
