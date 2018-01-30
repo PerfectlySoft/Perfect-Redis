@@ -30,7 +30,7 @@ let lf: UInt8 = 10
 let sp: UInt8 = 32
 
 extension String {
-  var bytes: [UInt8] { return self.utf8.map { $0 } }
+    var bytes: [UInt8] { return Array(self.utf8) }
 }
 
 extension UInt8 {
@@ -391,28 +391,28 @@ public class RedisClient {
     }
 
     // bool indicates that at least one byte was read before timing out
-        func fillBuffer(timeoutSeconds: Double, callback: @escaping (Bool) -> ()) {
-            self.net.readSomeBytes(count: redisDefaultReadSize) {
-                readBytes in
-                guard let readBytes = readBytes else {
-                    return callback(false)
-                }
-                if readBytes.count == 0 {
-                    // no data was available now. try with timeout
-                    self.net.readBytesFully(count: 1, timeoutSeconds: timeoutSeconds) {
-                        readBytes in
-                        guard let readBytes = readBytes else {
-                            return callback(false)
+   func fillBuffer(timeoutSeconds: Double, callback: @escaping (Bool) -> ()) {
+        self.net.readSomeBytes(count: redisDefaultReadSize) {
+            readBytes in
+            guard let readBytes = readBytes else {
+                return callback(false)
+            }
+            if readBytes.count == 0 {
+                // no data was available now. try with timeout
+                self.net.readBytesFully(count: 1, timeoutSeconds: timeoutSeconds) {
+                    readBytes in
+                    guard let readBytes = readBytes else {
+                        return callback(false)
                         }
-                        self.fifo.write(bytes: readBytes)
+                    self.fifo.write(bytes: readBytes)
                         callback(true)
                     }
-                } else {
-                    self.fifo.write(bytes: readBytes)
-                    callback(true)
+            } else {
+                self.fifo.write(bytes: readBytes)
+                callback(true)
                 }
             }
-        }
+    }
 }
 
 /// Connection related operations
