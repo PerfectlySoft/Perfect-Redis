@@ -2,6 +2,7 @@ import XCTest
 @testable import PerfectNet
 import PerfectThread
 @testable import PerfectRedis
+import Dispatch
 
 // Caveat emptor! These tests will FLUSHALL on the Redis host (127.0.0.1)
 
@@ -477,9 +478,70 @@ class PerfectRedisTests: XCTestCase {
             _ in
         }
     }
-    
+
+  func randomString(_ size: Int = 81899) -> String? {
+    let buf = Array<UInt8>(randomCount: size)
+    let text:[UInt8] = buf.map { source in
+      let ch = source % 62
+      if ch < 26 {
+        return ch + 65
+      } else if ch < 52 {
+        return ch + 71
+      } else {
+        return ch - 4
+      }
+    }
+    return String(bytes: text, encoding: .utf8)
+  }
+
+  func testLargeBulk() {
+    var content: [String] = []
+    for _ in 0..<1000 {
+      if let r = randomString(80) {
+        content.append(r)
+      }
+    }
+    let values = content.map { RedisClient.RedisValue.string($0) }
+    let keyvar = "MyLargeBulk"
+    let exp = self.expectation(description: "RedisClientLarge")
+    RedisClient.getClient(withIdentifier: self.clientIdentifier()) { c in
+      do {
+        let client = try c()
+        let g = DispatchGroup()
+        for v in values {
+          g.enter()
+          client.listAppend(key: keyvar, values: [v]) { resp in
+            let num = Int(resp.toString() ?? "0") ?? 0
+            XCTAssertNotEqual(num, 0)
+            g.leave()
+          }
+          g.wait()
+        }
+        g.enter()
+        client.listRange(key: keyvar, start: 0, stop: -1) { resp in
+          print("lrange", resp.toString() ?? "null")
+          g.leave()
+        }
+        g.wait()
+        g.enter()
+        client.delete(keys: keyvar) { resp in
+          let num = Int(resp.toString() ?? "0") ?? 0
+          XCTAssertNotEqual(num, 0)
+          print("append", keyvar, num)
+          g.leave()
+        }
+        g.wait()
+      } catch {
+        XCTFail("client failure")
+      }
+      exp.fulfill()
+    }
+    self.waitForExpectations(timeout: 60.0) { _ in }
+  }
+
     static var allTests : [(String, (PerfectRedisTests) -> () throws -> Void)] {
         return [
+            ("testLargeBulk", testLargeBulk),
             ("testPing", testPing),
             ("testPubSub", testPubSub),
             ("testGetClient", testGetClient),
