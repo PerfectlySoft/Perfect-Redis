@@ -18,6 +18,8 @@
 //
 
 import PerfectNet
+import PerfectThread
+import Foundation
 
 public let redisDefaultPort = 6379
 let redisNetTimeout = 5.0
@@ -227,6 +229,34 @@ public struct RedisClientIdentifier {
     }
 }
 
+fileprivate class FIFO {
+  var buffer: [UInt8] = []
+  public func write(bytes: [UInt8]) {
+    buffer.append(contentsOf: bytes)
+  }
+  public func readline() -> [UInt8]? {
+    guard let CR = buffer.index(of: cr),
+      let LF = buffer.index(of: lf),
+      1 == LF - CR else {
+        return nil
+    }
+    let head:[UInt8] = buffer[buffer.startIndex ..< CR].map { $0 }
+    let tail:[UInt8] = buffer[LF + 1 ..< buffer.endIndex].map { $0 }
+    buffer = tail
+    return head
+  }
+  public func read(size: Int) -> [UInt8]? {
+    if buffer.count >= size {
+      let head:[UInt8] = buffer[0..<size].map { $0 }
+      let tail:[UInt8] = buffer[size..<buffer.endIndex].map { $0 }
+      buffer = tail
+      return head
+    } else {
+      return nil
+    }
+  }
+}
+
 public class RedisClient {
 
     public typealias redisResponseCallback = (RedisResponse) -> ()
@@ -277,26 +307,14 @@ public class RedisClient {
     }
 
     let net: NetTCP
-    var readBuffer = [UInt8]()
-    var readBufferOffset = 0
-
-    var availableBufferedBytes: Int {
-        return self.readBuffer.count - self.readBufferOffset
-    }
-    
+    fileprivate let fifo: FIFO
     public init(net: NetTCP) {
         self.net = net
+        self.fifo = FIFO()
     }
 
     func close() {
         self.net.close()
-    }
-
-    func appendCRLF(to: [UInt8]) -> [UInt8] {
-        var a = to
-        a.append(cr)
-        a.append(lf)
-        return a
     }
 
     func commandBytes(name: String, parameters: [RedisResponse]) -> [UInt8] {
@@ -306,12 +324,12 @@ public class RedisClient {
             a.append(sp)
             a.append(contentsOf: param.toBytes())
         }
-
-        return self.appendCRLF(to: a)
+        a.append(contentsOf: [cr, lf])
+        return a
     }
 
     func commandBytes(name: String) -> [UInt8] {
-        return self.appendCRLF(to: name.bytes)
+        return name.bytes + [cr, lf]
     }
 
     public func sendCommand(name: String, parameters: [RedisResponse], callback: @escaping redisResponseCallback) {
@@ -344,59 +362,36 @@ public class RedisClient {
 
     // pull the request number of bytes from the buffer
     func extractBytesFromBuffer(size: Int, callback: @escaping ([UInt8]?) -> ()) {
-        if self.availableBufferedBytes >= size {
-            let ary = Array(self.readBuffer[self.readBufferOffset..<self.readBufferOffset+size])
-            self.readBufferOffset += size
-            self.trimReadBuffer()
-            callback(ary)
-        } else {
-            self.fillBuffer(timeoutSeconds: redisNetTimeout) {
-                ok in
-                if ok {
-                    self.extractBytesFromBuffer(size: size, callback: callback)
-                } else {
-                    callback(nil)
-                }
+      Threading.dispatch {
+        var pending = true
+        repeat {
+          if let buf = self.fifo.read(size: size) {
+            callback(buf)
+            pending = false
+          } else {
+            let cache = UnsafeMutablePointer<UInt8>.allocate(capacity: redisDefaultReadSize)
+            cache.initialize(to: 0)
+            let r = recv(self.net.fd.fd, cache, redisDefaultReadSize, 0)
+            if r > 0 {
+              let array = UnsafeMutableBufferPointer<UInt8>(start: cache, count: Int(r))
+              self.fifo.write(bytes: Array(array))
+            } else {
+              callback(nil)
+              pending = false
             }
-        }
+            cache.deallocate(capacity: redisDefaultReadSize)
+          }
+        } while pending
+      }
     }
 
     // returns nil if there is not a complete line to read
     func pullLineFromBuffer() -> [UInt8]? {
-
-        var startOffset = self.readBufferOffset
-        let endCount = self.readBuffer.count - 1 // so we can always include the lf
-
-        if endCount <= 0 {
-            return nil
-        }
-
-        while startOffset < endCount {
-            if self.readBuffer[startOffset] == cr && self.readBuffer[1 + startOffset] == lf {
-                let ret = self.readBuffer[self.readBufferOffset..<startOffset]
-                self.readBufferOffset = startOffset + 2
-                return Array(ret)
-            } else {
-                startOffset += 1
-            }
-        }
-        return nil
-    }
-
-    func trimReadBuffer() {
-        if self.readBufferOffset > 0 {
-            self.readBuffer.removeFirst(self.readBufferOffset)
-            self.readBufferOffset = 0
-        }
-    }
-
-    func appendToReadBuffer(bytes: [UInt8]) {
-        self.trimReadBuffer()
-        self.readBuffer.append(contentsOf: bytes)
+      return fifo.readline()
     }
 
     // bool indicates that at least one byte was read before timing out
-    func fillBuffer(timeoutSeconds: Double, callback: @escaping (Bool) -> ()) {
+   func fillBuffer(timeoutSeconds: Double, callback: @escaping (Bool) -> ()) {
         self.net.readSomeBytes(count: redisDefaultReadSize) {
             readBytes in
             guard let readBytes = readBytes else {
@@ -408,15 +403,15 @@ public class RedisClient {
                     readBytes in
                     guard let readBytes = readBytes else {
                         return callback(false)
+                        }
+                    self.fifo.write(bytes: readBytes)
+                        callback(true)
                     }
-                    self.appendToReadBuffer(bytes: readBytes)
-                    callback(true)
-                }
             } else {
-                self.appendToReadBuffer(bytes: readBytes)
+                self.fifo.write(bytes: readBytes)
                 callback(true)
+                }
             }
-        }
     }
 }
 
