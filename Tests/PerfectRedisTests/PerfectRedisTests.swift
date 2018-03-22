@@ -478,6 +478,45 @@ class PerfectRedisTests: XCTestCase {
         }
     }
     
+    func testSendCommandsAsRESP() {
+        let (key, value) = ("mykey", "myvalue")
+        let expectation = self.expectation(description: "RedisClient")
+        RedisClient.getClient(withIdentifier: clientIdentifier()) {
+            c in
+            do {
+                let client = try c()
+                client.sendCommandAsRESP(name: "SET", parameters: [key, value]) {
+                    response in
+                    guard response.isSimpleOK else {
+                        XCTAssert(false, "Unexpected response \(response)")
+                        expectation.fulfill()
+                        return
+                    }
+                    client.sendCommandAsRESP(name: "GET", parameters: [key]) {
+                        response in
+                        defer {
+                            RedisClient.releaseClient(client)
+                            expectation.fulfill()
+                        }
+                        guard case .bulkString = response else {
+                            XCTAssert(false, "Unexpected response \(response)")
+                            return
+                        }
+                        let s = response.toString()
+                        XCTAssert(s == value, "Unexpected response \(response)")
+                    }
+                }
+            } catch {
+                XCTAssert(false, "Could not connect to server \(error)")
+                expectation.fulfill()
+                return
+            }
+        }
+        self.waitForExpectations(timeout: 60.0) {
+            _ in
+        }
+    }
+    
     static var allTests : [(String, (PerfectRedisTests) -> () throws -> Void)] {
         return [
             ("testPing", testPing),
@@ -489,7 +528,8 @@ class PerfectRedisTests: XCTestCase {
             ("testExists", testExists),
             ("testSetGetXX", testSetGetXX),
             ("testSetGetNX", testSetGetNX),
-            ("testSetGetExp", testSetGetExp)
+            ("testSetGetExp", testSetGetExp),
+            ("testSendCommandsAsRESP", testSendCommandsAsRESP)
         ]
     }
 }
