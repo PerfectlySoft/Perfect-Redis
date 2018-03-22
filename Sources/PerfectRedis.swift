@@ -323,6 +323,15 @@ public class RedisClient {
         let a = self.commandBytes(name: name)
         self.sendRawCommand(bytes: a, callback: callback)
     }
+    
+    // Send command as serialized in RESP format: See https://redis.io/topics/protocol
+    public func sendCommandAsRESP(name: String, parameters: [String], callback: @escaping redisResponseCallback) {
+    
+        var array = [RedisResponse.bulkString(name.bytes)]
+        array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
+        
+        self.sendRawCommand(bytes: RedisResponse.array(array).toBytes(), callback: callback)
+    }
 
     // sends the bytes to trhe client
     // reads response when the bytes have been sent
