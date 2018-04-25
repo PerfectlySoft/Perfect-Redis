@@ -18,6 +18,7 @@
 //
 
 import PerfectNet
+import PerfectCrypto
 
 public let redisDefaultPort = 6379
 let redisNetTimeout = 5.0
@@ -42,19 +43,8 @@ extension UInt8 {
     }
 }
 
-extension Array where Element: UnsignedInteger {
-    var nullTerminatedPointer: UnsafePointer<CChar> {
-        if self.last == 0 {
-			return UnsafePointer(UnsafeMutableRawPointer(mutating: self).assumingMemoryBound(to: CChar.self))
-        }
-        var ary = self
-        ary.append(0)
-        return UnsafePointer(UnsafeMutableRawPointer(mutating: ary).assumingMemoryBound(to: CChar.self))
-    }
-
-    var string: String {
-        return String(validatingUTF8: self.nullTerminatedPointer) ?? ""
-    }
+private func s(_ a: [UInt8]) -> String {
+	return String(validatingUTF8: a) ?? ""
 }
 
 private func hexString(fromArray: [UInt8]) -> String {
@@ -92,7 +82,7 @@ public enum RedisResponse {
             return str
         case .bulkString(let bytes):
             if let b = bytes {
-                return b.string
+                return s(b)
             } else {
                 return nil
             }
@@ -144,13 +134,13 @@ public enum RedisResponse {
                     if i == 32 {
                         let type = Array(line[line.startIndex..<i])
                         let msg = Array(line[1+i..<endIndex])
-                        return callback(.error(type: type.string, msg: msg.string))
+                        return callback(.error(type: s(type), msg: s(msg)))
                     }
                 }
             case "+": // string
-                return callback(.simpleString(Array(line[1..<endIndex]).string))
+                return callback(.simpleString(s(Array(line[1..<endIndex]))))
             case "$": // bulk string
-                if let i = Int(Array(line[1..<endIndex]).string) {
+                if let i = Int(s(Array(line[1..<endIndex]))) {
                     if i == -1 {
                         return callback(.bulkString(nil))
                     }
@@ -164,11 +154,11 @@ public enum RedisResponse {
                     }
                 }
             case ":": // integer
-                if let i = Int(Array(line[1..<endIndex]).string) {
+                if let i = Int(s(Array(line[1..<endIndex]))) {
                     return callback(.integer(i))
                 }
             case "*": // array
-                if let i = Int(Array(line[1..<endIndex]).string) {
+                if let i = Int(s(Array(line[1..<endIndex]))) {
                     return readElements(client: client, count: i, into: [RedisResponse](), arrayCallback: callback)
                 }
             default:
