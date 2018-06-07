@@ -404,11 +404,11 @@ public class RedisClient {
 				// no data was available now. try with timeout
 				self.net.readBytesFully(count: 1, timeoutSeconds: timeoutSeconds) {
 					readBytes in
-					guard let readBytes = readBytes else {
+					guard let readBytes = readBytes, !readBytes.isEmpty else {
 						return callback(false)
 					}
 					self.appendToReadBuffer(bytes: readBytes)
-					self.fillBuffer(timeoutSeconds: timeoutSeconds, callback: callback)
+					callback(true)
 				}
 			} else {
 				self.appendToReadBuffer(bytes: readBytes)
