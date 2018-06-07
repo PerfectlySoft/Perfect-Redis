@@ -176,6 +176,9 @@ public enum RedisResponse {
 	}
 	
 	static func readElements(client: RedisClient, count: Int, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
+		if count == -1 {
+			return arrayCallback(.array([]))
+		}
 		if count == 0 {
 			return arrayCallback(.array(into))
 		}
