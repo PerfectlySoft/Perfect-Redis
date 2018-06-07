@@ -408,7 +408,7 @@ public class RedisClient {
 						return callback(false)
 					}
 					self.appendToReadBuffer(bytes: readBytes)
-					callback(true)
+					self.fillBuffer(timeoutSeconds: timeoutSeconds, callback: callback)
 				}
 			} else {
 				self.appendToReadBuffer(bytes: readBytes)
