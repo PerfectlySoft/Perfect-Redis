@@ -22,7 +22,7 @@ import PerfectCrypto
 import PerfectThread
 
 public let redisDefaultPort = 6379
-let redisNetTimeout = 5.0
+let redisDefaultNetTimeout = 5.0
 let redisDefaultReadSize = 2048
 
 let cr: UInt8 = 13
@@ -179,7 +179,7 @@ public enum RedisResponse {
 		if count == 0 {
 			return arrayCallback(.array(into))
 		}
-		RedisResponse.readResponse(client: client, timeoutSeconds: redisNetTimeout) {
+		RedisResponse.readResponse(client: client, timeoutSeconds: client.netTimeout) {
 			element in
 			
 			if case .error = element {
@@ -235,7 +235,7 @@ public class RedisClient {
 		// !FIX! would look in cache here
 		let net = withIdentifier.netGenerator()
 		do {
-			try net.connect(address: withIdentifier.host, port: UInt16(withIdentifier.port), timeoutSeconds: redisNetTimeout) {
+			try net.connect(address: withIdentifier.host, port: UInt16(withIdentifier.port), timeoutSeconds: redisDefaultNetTimeout) {
 				net in
 				if let n = net {
 					let client = RedisClient(net: n)
@@ -267,10 +267,11 @@ public class RedisClient {
 	let net: NetTCP
 	var readBuffer = [UInt8]()
 	var readBufferOffset = 0
-	
 	var availableBufferedBytes: Int {
 		return readBuffer.count - readBufferOffset
 	}
+	
+	public var netTimeout = redisDefaultNetTimeout
 	
 	public init(net: NetTCP) {
 		self.net = net
@@ -336,7 +337,7 @@ public class RedisClient {
 	}
 	
 	func readResponse(callback: @escaping redisResponseCallback) {
-		RedisResponse.readResponse(client: self, timeoutSeconds: redisNetTimeout, callback: callback)
+		RedisResponse.readResponse(client: self, timeoutSeconds: netTimeout, callback: callback)
 	}
 	
 	// pull the request number of bytes from the buffer
@@ -347,7 +348,7 @@ public class RedisClient {
 			trimReadBuffer()
 			callback(ary)
 		} else {
-			fillBuffer(timeoutSeconds: redisNetTimeout) {
+			fillBuffer(timeoutSeconds: netTimeout) {
 				ok in
 				if ok {
 					self.extractBytesFromBuffer(size: size, callback: callback)

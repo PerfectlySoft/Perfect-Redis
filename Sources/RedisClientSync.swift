@@ -23,7 +23,7 @@ public extension RedisClient {
 		let net = withIdentifier.netGenerator()
 		let sync = Promise<RedisClient> {
 			(sync: Promise) in
-			try net.connect(address: withIdentifier.host, port: UInt16(withIdentifier.port), timeoutSeconds: redisNetTimeout) {
+			try net.connect(address: withIdentifier.host, port: UInt16(withIdentifier.port), timeoutSeconds: redisDefaultNetTimeout) {
 				net in
 				if let n = net {
 					let client = RedisClient(net: n)
