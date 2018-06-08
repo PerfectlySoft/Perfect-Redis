@@ -46,7 +46,7 @@ Redis client support for Perfect
 Get a redis client with defaults (localhost, default port):
 
 ```swift
-let client = RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
+let client = RedisClient.getClient(withIdentifier: RedisClientIdentifier())
 
 ```
 
