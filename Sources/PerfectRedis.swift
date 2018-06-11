@@ -75,6 +75,31 @@ public enum RedisResponse {
 		return true
 	}
 	
+	public var isNil: Bool {
+		if case .bulkString(let b) = self, b == nil {
+			return true
+		}
+		return false
+	}
+	
+	public var value: RedisClient.RedisValue? {
+		switch self {
+		case .error(let type, let msg):
+			return nil
+		case .simpleString(let s):
+			return .string(s)
+		case .bulkString(let b):
+			guard let b = b else {
+				return nil
+			}
+			return .binary(b)
+		case .integer(_):
+			return nil
+		case .array(_):
+			return nil
+		}
+	}
+	
 	public func toString() -> String? {
 		switch self {
 		case .error(let type, let msg):
