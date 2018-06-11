@@ -1048,8 +1048,8 @@ public extension RedisClient {
 	}
 	
 	/// Pop and return the last element from the list. Append the element to the destination list.
-	func listPopLastAppendBlocking(sourceKey: String, destKey: String, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "BRPOPLPUSH \(sourceKey) \(destKey)", callback: callback)
+	func listPopLastAppendBlocking(sourceKey: String, destKey: String, timeout: Int = 0, callback: @escaping redisResponseCallback) {
+		sendCommand(name: "BRPOPLPUSH \(sourceKey) \(destKey) \(timeout)", callback: callback)
 	}
 	
 	/// Pop and return the first element from the list
@@ -1143,8 +1143,8 @@ public extension RedisClient {
 	}
 	
 	/// Pop and return the last element from the list. Append the element to the destination list.
-	func listPopLastAppendBlocking(sourceKey: String, destKey: String) throws -> RedisResponse {
-		return try sendCommand(name: "BRPOPLPUSH \(sourceKey) \(destKey)")
+	func listPopLastAppendBlocking(sourceKey: String, destKey: String, timeout: Int) throws -> RedisResponse {
+		return try sendCommand(name: "BRPOPLPUSH \(sourceKey) \(destKey) \(timeout)")
 	}
 	
 	/// Pop and return the first element from the list
