@@ -19,6 +19,13 @@ extension RedisClient {
 }
 
 public extension RedisClient {
+	public struct CommandError: Error, CustomStringConvertible {
+		public let description: String
+		init(_ msg: String) {
+			description = msg
+		}
+	}
+	
 	static func getClient(withIdentifier: RedisClientIdentifier) throws -> RedisClient {
 		let net = withIdentifier.netGenerator()
 		let sync = Promise<RedisClient> {
@@ -72,11 +79,15 @@ public extension RedisClient {
 			self.net.write(bytes: bytes) {
 				wrote in
 				guard wrote == bytes.count else {
-					return sync.set(.error(type: "NET", msg: "Failed to write all bytes"))
+					return sync.fail(CommandError("Failed to write all bytes"))
 				}
 				self.readResponse {
 					response in
-					sync.set(response)
+					if case .error(_, let msg) = response {
+						sync.fail(CommandError(msg))
+					} else {
+						sync.set(response)
+					}
 				}
 			}
 		}
