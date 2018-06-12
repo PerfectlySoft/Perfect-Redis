@@ -251,6 +251,13 @@ public class RedisClient {
 		case string(String)
 		case binary([UInt8])
 		
+		public func toString() -> String? {
+			switch self {
+			case .string(let s): return s
+			case .binary(let b) : return String(validatingUTF8: b)
+			}
+		}
+		
 		public func toCommandString() -> String {
 			switch self {
 			case .string(let s): return "\"\(s)\""
