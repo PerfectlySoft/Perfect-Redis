@@ -13,6 +13,14 @@ public struct RedisHash {
 	public typealias ValueType = RedisClient.RedisValue
 	let client: RedisClient
 	let name: String
+	public var exists: Bool {
+		guard let response = try? client.exists(keys: name),
+				case .integer(let i) = response,
+				i == 1 else {
+			return false
+		}
+		return true
+	}
 	public init(_ client: RedisClient, name: String) {
 		self.client = client
 		self.name = name
