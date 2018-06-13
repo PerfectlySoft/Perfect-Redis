@@ -19,13 +19,6 @@ extension RedisClient {
 }
 
 public extension RedisClient {
-	public struct CommandError: Error, CustomStringConvertible {
-		public let description: String
-		init(_ msg: String) {
-			description = msg
-		}
-	}
-	
 	static func getClient(withIdentifier: RedisClientIdentifier) throws -> RedisClient {
 		let net = withIdentifier.netGenerator()
 		let sync = Promise<RedisClient> {
