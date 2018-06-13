@@ -61,7 +61,13 @@ extension RedisList {
 	public var isEmpty: Bool {
 		return count == 0
 	}
-	
+	public var values: [Element] {
+		guard let response = try? client.listRange(key: name, start: 0, stop: -1),
+			case .array(let a) = response else {
+				return []
+		}
+		return a.compactMap { $0.value }
+	}
 	public var first: Element? {
 		return self[0]
 	}
@@ -101,8 +107,9 @@ extension RedisList {
 	public func removeLast(_ count: Int = 1) {
 		_ = try? client.listTrim(key: name, start: 0, stop: -count)
 	}
-	public func remove(matching: Element, count: Int = 0) -> Int {
-		return (try? client.listRemoveMatching(key: name, value: matching, count: count))?.integer ?? 0
+	@discardableResult
+	public func remove(matching: RedisValueRepresentable, count: Int = 0) -> Int {
+		return (try? client.listRemoveMatching(key: name, value: matching.redisValue, count: count))?.integer ?? 0
 	}
 	
 	@discardableResult

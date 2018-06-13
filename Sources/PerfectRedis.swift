@@ -777,6 +777,7 @@ public extension RedisClient {
 		sendCommand(name: "DEL \(keys.joined(separator: " "))", callback: callback)
 	}
 	/// Get the key value.
+	@discardableResult
 	func delete(keys: String...) throws -> RedisResponse {
 		return try sendCommand(name: "DEL \(keys.joined(separator: " "))")
 	}
