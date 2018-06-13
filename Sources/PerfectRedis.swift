@@ -130,7 +130,7 @@ public enum RedisResponse {
 	}
 	
 	// to a not null terminated char array
-	func toBytes() -> [UInt8] {
+	var bytes: [UInt8] {
 		switch self {
 		case .error(let type, let msg):
 			return "-\(type) \(msg)\r\n".bytes
@@ -151,7 +151,7 @@ public enum RedisResponse {
 			
 			var ary = "*\(array.count)\r\n".bytes
 			for elem in array {
-				ary.append(contentsOf: elem.toBytes())
+				ary.append(contentsOf: elem.bytes)
 			}
 			return ary
 		}
@@ -256,6 +256,25 @@ public extension RedisClientIdentifier {
 	}
 }
 
+public protocol RedisValueRepresentable {
+	var redisValue: RedisClient.RedisValue { get }
+}
+
+extension String: RedisValueRepresentable {
+	public var redisValue: RedisClient.RedisValue {
+		return .string(self)
+	}
+}
+
+public protocol ROctal {}
+extension UInt8: ROctal {}
+
+extension Array: RedisValueRepresentable where Element: ROctal {
+	public var redisValue: RedisClient.RedisValue {
+		return .binary(self as! [UInt8])
+	}
+}
+
 public class RedisClient {
 	public struct CommandError: Error, CustomStringConvertible {
 		public let description: String
@@ -267,9 +286,11 @@ public class RedisClient {
 	
 	public typealias redisResponseCallback = (RedisResponse) -> ()
 	
-	public enum RedisValue {
+	public enum RedisValue: RedisValueRepresentable {
 		case string(String)
 		case binary([UInt8])
+		
+		public var redisValue: RedisClient.RedisValue { return self }
 		
 		@available(*, deprecated, message: "Use `string` property.")
 		public func toString() -> String? {
@@ -353,7 +374,7 @@ public class RedisClient {
 		
 		for param in parameters {
 			a.append(sp)
-			a.append(contentsOf: param.toBytes())
+			a.append(contentsOf: param.bytes)
 		}
 		
 		return appendCRLF(to: a)
@@ -379,7 +400,7 @@ public class RedisClient {
 		var array = [RedisResponse.bulkString(name.bytes)]
 		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
 		
-		sendRawCommand(bytes: RedisResponse.array(array).toBytes(), callback: callback)
+		sendRawCommand(bytes: RedisResponse.array(array).bytes, callback: callback)
 	}
 	
 	// sends the bytes to trhe client
@@ -1686,6 +1707,9 @@ public extension RedisClient {
 	Otherwise the command returns the number of fields that have been deleted
 	*/
 	func hashDel(key: String, fields: String...) throws -> RedisResponse {
+		return try sendCommand(name: "HDEL \(key) \(fields.joined(separator: " "))")
+	}
+	func hashDel(key: String, fields: [String]) throws -> RedisResponse {
 		return try sendCommand(name: "HDEL \(key) \(fields.joined(separator: " "))")
 	}
 	

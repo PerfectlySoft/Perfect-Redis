@@ -106,30 +106,30 @@ extension RedisList {
 	}
 	
 	@discardableResult
-	public func append(_ element: Element) -> Int {
-		return (try? client.listAppend(key: name, values: [element]))?.integer ?? 0
+	public func append(_ element: RedisValueRepresentable) -> Int {
+		return (try? client.listAppend(key: name, values: [element.redisValue]))?.integer ?? 0
 	}
 	@discardableResult
-	public func prepend(_ element: Element) -> Int {
-		return (try? client.listPrepend(key: name, values: [element]))?.integer ?? 0
+	public func prepend(_ element: RedisValueRepresentable) -> Int {
+		return (try? client.listPrepend(key: name, values: [element.redisValue]))?.integer ?? 0
 	}
 	@discardableResult
-	public func appendIfExists(_ element: Element) -> Int {
-		return (try? client.listAppendX(key: name, value: element))?.integer ?? 0
+	public func appendIfExists(_ element: RedisValueRepresentable) -> Int {
+		return (try? client.listAppendX(key: name, value: element.redisValue))?.integer ?? 0
 	}
 	@discardableResult
-	public func prependIfExists(_ element: Element) -> Int {
-		return (try? client.listPrependX(key: name, value: element))?.integer ?? 0
+	public func prependIfExists(_ element: RedisValueRepresentable) -> Int {
+		return (try? client.listPrependX(key: name, value: element.redisValue))?.integer ?? 0
 	}
-	public func insert(_ element: Element, at: Index) {
-		_ = try? client.listSet(key: name, index: at, value: element)
-	}
-	@discardableResult
-	public func insert(_ element: Element, after: Element) -> Int {
-		return (try? client.listInsert(key: name, element: element, after: after))?.integer ?? 0
+	public func insert(_ element: RedisValueRepresentable, at: Index) {
+		_ = try? client.listSet(key: name, index: at, value: element.redisValue)
 	}
 	@discardableResult
-	public func insert(_ element: Element, before: Element) -> Int {
-		return (try? client.listInsert(key: name, element: element, before: before))?.integer ?? 0
+	public func insert(_ element: RedisValueRepresentable, after: RedisValueRepresentable) -> Int {
+		return (try? client.listInsert(key: name, element: element.redisValue, after: after.redisValue))?.integer ?? 0
+	}
+	@discardableResult
+	public func insert(_ element: RedisValueRepresentable, before: RedisValueRepresentable) -> Int {
+		return (try? client.listInsert(key: name, element: element.redisValue, before: before.redisValue))?.integer ?? 0
 	}
 }

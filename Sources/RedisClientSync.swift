@@ -63,7 +63,7 @@ public extension RedisClient {
 	public func sendCommandAsRESP(name: String, parameters: [String]) throws -> RedisResponse {
 		var array = [RedisResponse.bulkString(name.bytes)]
 		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
-		return try sendRawCommand(bytes: RedisResponse.array(array).toBytes())
+		return try sendRawCommand(bytes: RedisResponse.array(array).bytes)
 	}
 	
 	func sendRawCommand(bytes: [UInt8]) throws -> RedisResponse {

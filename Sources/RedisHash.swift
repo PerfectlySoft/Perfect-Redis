@@ -47,6 +47,29 @@ public struct RedisHash {
 			}
 		}
 	}
+	public func contains(_ key: KeyType) -> Bool {
+		return 1 == (try? client.hashExists(key: name, field: key))?.integer ?? 0
+	}
+	public func removeValue(forKey: KeyType) -> Bool {
+		return 0 != (try? client.hashDel(key: name, fields: forKey))?.integer ?? 0
+	}
+	public func removeAll() {
+		let keys = self.keys
+		guard !keys.isEmpty else {
+			return
+		}
+		_ = try? client.hashDel(key: name, fields: keys)
+	}
+	public func increment(key: KeyType, by: Int) -> Int {
+		return (try? client.hashIncrementBy(key: name, field: key, by: by))?.integer ?? 0
+	}
+	public func increment(key: KeyType, by: Double) -> Double {
+		guard let str = (try? client.hashIncrementBy(key: name, field: key, by: by))?.string,
+			let d = Double(str) else {
+			return 0.0
+		}
+		return d
+	}
 }
 
 extension RedisHash: Sequence {
@@ -59,7 +82,6 @@ extension RedisHash: Sequence {
 		}
 		return Iterator(items: a.compactMap { $0.value })
 	}
-	
 	public struct Iterator: IteratorProtocol {
 		public typealias Element = RedisHash.Element
 		var index = 0
