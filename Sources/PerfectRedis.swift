@@ -20,6 +20,7 @@
 import PerfectNet
 import PerfectCrypto
 import PerfectThread
+import Dispatch
 
 public let redisDefaultPort = 6379
 let redisDefaultNetTimeout = 5.0
@@ -207,7 +208,7 @@ public enum RedisResponse {
 		}
 	}
 	
-	static func readElements(client: RedisClient, count: Int, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
+	static func readElements(client: RedisClient, count: Int, recurseCheck: Int = 5, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
 		if count == -1 {
 			return arrayCallback(.array([]))
 		}
@@ -223,8 +224,13 @@ public enum RedisResponse {
 			
 			var newAry = into
 			newAry.append(element)
-			
-			RedisResponse.readElements(client: client, count: count - 1, into: newAry, arrayCallback: arrayCallback)
+			if recurseCheck == 0 { // suboptimal
+				DispatchQueue.global().async {
+					RedisResponse.readElements(client: client, count: count - 1, into: newAry, arrayCallback: arrayCallback)
+				}
+			} else {
+				RedisResponse.readElements(client: client, count: count - 1, recurseCheck: recurseCheck - 1, into: newAry, arrayCallback: arrayCallback)
+			}
 		}
 	}
 }
