@@ -72,9 +72,7 @@ extension RedisHash: Sequence {
 				let value = items.next() else {
 				return nil
 			}
-			
-			
-			return nil
+			return (name, value)
 		}
 	}
 }
