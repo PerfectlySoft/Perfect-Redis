@@ -77,12 +77,13 @@ extension RedisList {
 	public subscript(position: Index) -> Element? {
 		return (try? client.listGetElement(key: name, index: position))?.value
 	}
+	/*
 	public subscript(positions: Range<Index>) -> SubSequence {
 		return SubSequence({
 			return Iterator(list: self, startIndex: positions.startIndex, endIndex: positions.endIndex)
 		})
 	}
-	
+	*/
 	public func popFirst() -> Element? {
 		return (try? client.listPopFirst(key: name))?.value
 	}
