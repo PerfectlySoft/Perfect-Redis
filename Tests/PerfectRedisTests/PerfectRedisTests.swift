@@ -146,7 +146,7 @@ class PerfectRedisTests: XCTestCase {
                             XCTAssert(false, "Unexpected response \(response)")
                             return
                         }
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssert(s == value, "Unexpected response \(response)")
                     }
                 }
@@ -234,7 +234,7 @@ class PerfectRedisTests: XCTestCase {
                                 XCTAssert(false, "Unexpected response \(response)")
                                 return
                             }
-                            let s = response.toString()
+                            let s = response.string
                             XCTAssert(s == value, "Unexpected response \(response)")
                             
                             // set the string IF IT DOES NOT EXIST - which is false
@@ -260,7 +260,7 @@ class PerfectRedisTests: XCTestCase {
                                         return
                                     }
                                     
-                                    let s = response.toString()
+                                    let s = response.string
                                     XCTAssert(s != value2, "Unexpected response \(response)")
                                 }
                             }
@@ -298,7 +298,7 @@ class PerfectRedisTests: XCTestCase {
                             XCTAssert(false, "Unexpected response \(response)")
                             return
                         }
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssert(s == value, "Unexpected response \(response)")
                         Threading.sleep(seconds: 3.0)
                         client.get(key: key) {
@@ -391,7 +391,7 @@ class PerfectRedisTests: XCTestCase {
                             XCTAssert(false, "Unexpected response \(response)")
                             return
                         }
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssert(s == value, "Unexpected response \(response)")
                         client.append(key: key, value: .string(value)) {
                             response in
@@ -410,7 +410,7 @@ class PerfectRedisTests: XCTestCase {
                                     XCTAssert(false, "Unexpected response \(response)")
                                     return
                                 }
-                                let s = response.toString()
+                                let s = response.string
                                 XCTAssert(s == value + value, "Unexpected response \(response)")
                             }
                         }
@@ -453,9 +453,9 @@ class PerfectRedisTests: XCTestCase {
                                         return
                                     }
                                     XCTAssert(array.count == 3, "Invalid array elements")
-                                    XCTAssert(array[0].toString() == "message")
-                                    XCTAssert(array[1].toString() == "foo")
-                                    XCTAssert(array[2].toString() == "Hello!")
+                                    XCTAssert(array[0].string == "message")
+                                    XCTAssert(array[1].string == "foo")
+                                    XCTAssert(array[2].string == "Hello!")
                                 }
                             }
                         }
@@ -502,7 +502,7 @@ class PerfectRedisTests: XCTestCase {
                             XCTAssert(false, "Unexpected response \(response)")
                             return
                         }
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssert(s == value, "Unexpected response \(response)")
                     }
                 }

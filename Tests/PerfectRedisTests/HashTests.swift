@@ -50,7 +50,7 @@ class HashTests: XCTestCase {
                             XCTFail("Unexpected response \(response)")
                             return
                         }
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssertEqual(s, value, "Unexpected response \(response)")
                     }
                 }
@@ -83,15 +83,15 @@ class HashTests: XCTestCase {
                     _ in
                     client.hashExists(key: key, field: field) {
                         response in
-                        let s = response.toString()
+                        let s = response.string
                         XCTAssertEqual(s, "1", "Unexpected response \(response)")
                         client.hashDel(key: key, fields: field) {
                             response in
-                            let s = response.toString()
+                            let s = response.string
                             XCTAssertEqual(s, "1", "Unexpected response \(response)")
                             client.hashExists(key: key, field: field) {
                                 response in
-                                let s = response.toString()
+                                let s = response.string
                                 XCTAssertEqual(s, "0", "Unexpected response \(response)")
                                 client.hashDel(key: key, fields: field) {
                                     response in
@@ -99,7 +99,7 @@ class HashTests: XCTestCase {
                                         RedisClient.releaseClient(client)
                                         expectation.fulfill()
                                     }
-                                    let s = response.toString()
+                                    let s = response.string
                                     XCTAssertEqual(s, "0", "Unexpected response \(response)")
                                 }
                             }
@@ -143,8 +143,8 @@ class HashTests: XCTestCase {
                                 var resultDict: [String: String] = [:]
                                 var ar = a
                                 while ar.count > 0 {
-                                    let value: String = ar.popLast()!.toString()!
-                                    let key: String = ar.popLast()!.toString()!
+                                    let value: String = ar.popLast()!.string!
+                                    let key: String = ar.popLast()!.string!
                                     resultDict[key] = value
                                 }
                                 XCTAssertEqual(expectedDict, resultDict, "Unexpected dictionary returned \(resultDict)")
@@ -187,7 +187,7 @@ class HashTests: XCTestCase {
                         }
                         switch response {
                             case .array(let a):
-                                let resultArray: [String] = a.map { return $0.toString()! }
+                                let resultArray: [String] = a.map { return $0.string! }
                                 XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
                             default:
                                 XCTFail("Unexpected response \(response)")
@@ -226,7 +226,7 @@ class HashTests: XCTestCase {
                         response in
                         switch response {
                             case .array(let a):
-                                let resultArray: [String] = a.map { return $0.toString()! }
+                                let resultArray: [String] = a.map { return $0.string! }
                                 XCTAssertEqual(expectedKeys, resultArray, "Unexpected array returned \(a)")
                             default:
                                 XCTFail("Unexpected response \(response)")
@@ -235,7 +235,7 @@ class HashTests: XCTestCase {
 							response in
 							switch response {
 								case .array(let a):
-									let resultArray: [String] = a.map { return $0.toString()! }
+									let resultArray: [String] = a.map { return $0.string! }
 									XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
 								default:
 									XCTFail("Unexpected response \(response)")
@@ -396,7 +396,7 @@ class HashTests: XCTestCase {
                                 return
                             }
 
-                            let result = Double(response.toString()!)!
+                            let result = Double(response.string!)!
 							XCTAssertEqual(1.5, result, accuracy: 0.1, "Unexpected response \(response)")
                         }
                     }
@@ -434,13 +434,13 @@ class HashTests: XCTestCase {
                         }
                         switch response {
                             case .array(let a):
-                                XCTAssertEqual("0", a[0].toString())
+                                XCTAssertEqual("0", a[0].string)
                                 var resultDict: [String: String] = [:]
                                 switch a[1] {
                                     case .array(var ar):
                                         while ar.count > 0 {
-                                            let value: String = ar.popLast()!.toString()!
-                                            let key: String = ar.popLast()!.toString()!
+                                            let value: String = ar.popLast()!.string!
+                                            let key: String = ar.popLast()!.string!
                                             resultDict[key] = value
                                         }
                                         XCTAssertEqual(expectedDict, resultDict, "Unexpected dictionary returned \(resultDict)")
