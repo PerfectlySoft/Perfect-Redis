@@ -101,6 +101,11 @@ public enum RedisResponse {
 		}
 	}
 	
+	@available(*, deprecated, message: "Use `string` property.")
+	public func toString() -> String? {
+		return string
+	}
+	
 	public var string: String? {
 		switch self {
 		case .error(let type, let msg):
