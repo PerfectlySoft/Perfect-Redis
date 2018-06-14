@@ -20,6 +20,7 @@
 import PerfectNet
 import PerfectCrypto
 import PerfectThread
+import Dispatch
 
 public let redisDefaultPort = 6379
 let redisDefaultNetTimeout = 5.0
@@ -81,10 +82,10 @@ public enum RedisResponse {
 		}
 		return false
 	}
-	
+	// .string or .binary, else nil
 	public var value: RedisClient.RedisValue? {
 		switch self {
-		case .error(let type, let msg):
+		case .error:
 			return nil
 		case .simpleString(let s):
 			return .string(s)
@@ -93,14 +94,14 @@ public enum RedisResponse {
 				return nil
 			}
 			return .binary(b)
-		case .integer(_):
+		case .integer:
 			return nil
-		case .array(_):
+		case .array:
 			return nil
 		}
 	}
 	
-	public func toString() -> String? {
+	public var string: String? {
 		switch self {
 		case .error(let type, let msg):
 			return "\(type) \(msg)"
@@ -116,14 +117,21 @@ public enum RedisResponse {
 			return "\(int)"
 		case .array(let array):
 			var ary = "["
-			ary.append(array.map { $0.toString() ?? "nil" }.joined(separator: ", "))
+			ary.append(array.map { $0.string ?? "nil" }.joined(separator: ", "))
 			ary.append("]")
 			return ary
 		}
 	}
 	
+	public var integer: Int {
+		guard case .integer(let i) = self else {
+			return 0
+		}
+		return i
+	}
+	
 	// to a not null terminated char array
-	func toBytes() -> [UInt8] {
+	var bytes: [UInt8] {
 		switch self {
 		case .error(let type, let msg):
 			return "-\(type) \(msg)\r\n".bytes
@@ -144,7 +152,7 @@ public enum RedisResponse {
 			
 			var ary = "*\(array.count)\r\n".bytes
 			for elem in array {
-				ary.append(contentsOf: elem.toBytes())
+				ary.append(contentsOf: elem.bytes)
 			}
 			return ary
 		}
@@ -200,7 +208,7 @@ public enum RedisResponse {
 		}
 	}
 	
-	static func readElements(client: RedisClient, count: Int, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
+	static func readElements(client: RedisClient, count: Int, recurseCheck: Int = 5, into: [RedisResponse], arrayCallback: @escaping (RedisResponse) -> ()) {
 		if count == -1 {
 			return arrayCallback(.array([]))
 		}
@@ -216,8 +224,13 @@ public enum RedisResponse {
 			
 			var newAry = into
 			newAry.append(element)
-			
-			RedisResponse.readElements(client: client, count: count - 1, into: newAry, arrayCallback: arrayCallback)
+			if recurseCheck == 0 { // suboptimal
+				DispatchQueue.global().async {
+					RedisResponse.readElements(client: client, count: count - 1, into: newAry, arrayCallback: arrayCallback)
+				}
+			} else {
+				RedisResponse.readElements(client: client, count: count - 1, recurseCheck: recurseCheck - 1, into: newAry, arrayCallback: arrayCallback)
+			}
 		}
 	}
 }
@@ -243,22 +256,61 @@ public struct RedisClientIdentifier {
 	}
 }
 
+public extension RedisClientIdentifier {
+	func client() throws -> RedisClient {
+		return try RedisClient.getClient(withIdentifier: self)
+	}
+}
+
+public protocol RedisValueRepresentable {
+	var redisValue: RedisClient.RedisValue { get }
+}
+
+extension String: RedisValueRepresentable {
+	public var redisValue: RedisClient.RedisValue {
+		return .string(self)
+	}
+}
+
+public protocol ROctal {}
+extension UInt8: ROctal {}
+
+extension Array: RedisValueRepresentable where Element: ROctal {
+	public var redisValue: RedisClient.RedisValue {
+		return .binary(self as! [UInt8])
+	}
+}
+
 public class RedisClient {
+	public struct CommandError: Error, CustomStringConvertible {
+		public let description: String
+		init(_ msg: String) {
+			description = msg
+		}
+	}
+	public static let invalidResponseError = CommandError("Invalid response type for command.")
 	
 	public typealias redisResponseCallback = (RedisResponse) -> ()
 	
-	public enum RedisValue {
+	public enum RedisValue: RedisValueRepresentable {
 		case string(String)
 		case binary([UInt8])
 		
+		public var redisValue: RedisClient.RedisValue { return self }
+		
+		@available(*, deprecated, message: "Use `string` property.")
 		public func toString() -> String? {
+			return string
+		}
+		
+		public var string: String? {
 			switch self {
 			case .string(let s): return s
 			case .binary(let b) : return String(validatingUTF8: b)
 			}
 		}
 		
-		public func toCommandString() -> String {
+		public var commandString: String {
 			switch self {
 			case .string(let s): return "\"\(s)\""
 			case .binary(let b) : return "\"\(hexString(fromArray: b))\""
@@ -328,7 +380,7 @@ public class RedisClient {
 		
 		for param in parameters {
 			a.append(sp)
-			a.append(contentsOf: param.toBytes())
+			a.append(contentsOf: param.bytes)
 		}
 		
 		return appendCRLF(to: a)
@@ -354,7 +406,7 @@ public class RedisClient {
 		var array = [RedisResponse.bulkString(name.bytes)]
 		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
 		
-		sendRawCommand(bytes: RedisResponse.array(array).toBytes(), callback: callback)
+		sendRawCommand(bytes: RedisResponse.array(array).bytes, callback: callback)
 	}
 	
 	// sends the bytes to trhe client
@@ -668,7 +720,7 @@ public extension RedisClient {
 		} else if ifExists {
 			options += " XX"
 		}
-		sendCommand(name: "SET \(key) \(value.toCommandString())\(options)", callback: callback)
+		sendCommand(name: "SET \(key) \(value.commandString)\(options)", callback: callback)
 	}
 	/// Set the key to the String value with an optional expiration.
 	func set(key: String, value: RedisValue, expires: Double = 0.0, ifNotExists: Bool = false, ifExists: Bool = false) throws -> RedisResponse {
@@ -683,20 +735,20 @@ public extension RedisClient {
 	
 	/// Set the keys/values.
 	func set(keysValues: [(String, RedisValue)], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "MSET \(keysValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "MSET \(keysValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))", callback: callback)
 	}
 	/// Set the keys/values.
 	func set(keysValues: [(String, RedisValue)]) throws -> RedisResponse {
-		return try sendCommand(name: "MSET \(keysValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))")
+		return try sendCommand(name: "MSET \(keysValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))")
 	}
 	
 	/// Set the keys/values.
 	func setIfNonExists(keysValues: [(String, RedisValue)], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "MSETNX \(keysValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "MSETNX \(keysValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))", callback: callback)
 	}
 	/// Set the keys/values.
 	func setIfNonExists(keysValues: [(String, RedisValue)]) throws -> RedisResponse {
-		return try sendCommand(name: "MSETNX \(keysValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))")
+		return try sendCommand(name: "MSETNX \(keysValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))")
 	}
 	
 	/// Get the key value.
@@ -719,11 +771,11 @@ public extension RedisClient {
 	
 	/// Get the key value and set to new value.
 	func getSet(key: String, newValue: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "GETSET \(key) \(newValue.toCommandString())", callback: callback)
+		sendCommand(name: "GETSET \(key) \(newValue.commandString)", callback: callback)
 	}
 	/// Get the key value and set to new value.
 	func getSet(key: String, newValue: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "GETSET \(key) \(newValue.toCommandString())")
+		return try sendCommand(name: "GETSET \(key) \(newValue.commandString)")
 	}
 	
 	/// Get the key value.
@@ -731,6 +783,7 @@ public extension RedisClient {
 		sendCommand(name: "DEL \(keys.joined(separator: " "))", callback: callback)
 	}
 	/// Get the key value.
+	@discardableResult
 	func delete(keys: String...) throws -> RedisResponse {
 		return try sendCommand(name: "DEL \(keys.joined(separator: " "))")
 	}
@@ -815,11 +868,11 @@ public extension RedisClient {
 	
 	/// Append a value to the key.
 	func append(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "APPEND \(key) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "APPEND \(key) \(value.commandString)", callback: callback)
 	}
 	/// Append a value to the key.
 	func append(key: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "APPEND \(key) \(value.toCommandString())")
+		return try sendCommand(name: "APPEND \(key) \(value.commandString)")
 	}
 	
 	/// Set the expiration for the indicated key.
@@ -1016,22 +1069,22 @@ public extension RedisClient {
 	
 	/// Push values to the beginning of the list
 	func listPrepend(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LPUSH \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "LPUSH \(key) \(values.map { $0.commandString }.joined(separator: " "))", callback: callback)
 	}
 	
 	/// Push values to the end of the list
 	func listAppend(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "RPUSH \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "RPUSH \(key) \(values.map { $0.commandString }.joined(separator: " "))", callback: callback)
 	}
 	
 	/// Push value to the beginning of the list. LPUSHX
 	func listPrependX(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LPUSHX \(key) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "LPUSHX \(key) \(value.commandString)", callback: callback)
 	}
 	
 	/// Push value to the end of the list. RPUSHX
 	func listAppendX(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "RPUSHX \(key) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "RPUSHX \(key) \(value.commandString)", callback: callback)
 	}
 	
 	/// Pop and return the first element from the list
@@ -1042,11 +1095,6 @@ public extension RedisClient {
 	/// Pop and return the last element from the list
 	func listPopLast(key: String, callback: @escaping redisResponseCallback) {
 		sendCommand(name: "RPOP \(key)", callback: callback)
-	}
-	
-	/// Pop and return the first element from the list
-	func listPopFirstAppend(key: String, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LPOP \(key)", callback: callback)
 	}
 	
 	/// Pop and return the last element from the list. Append the element to the destination list.
@@ -1091,42 +1139,45 @@ public extension RedisClient {
 	
 	/// Inserts the new item before the indicated value.
 	func listInsert(key: String, element: RedisValue, before: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LINSERT \(key) BEFORE \(before.toCommandString())", callback: callback)
+		sendCommand(name: "LINSERT \(key) BEFORE \(before.commandString)", callback: callback)
 	}
 	
 	/// Inserts the new item after the indicated value.
 	func listInsert(key: String, element: RedisValue, after: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LINSERT \(key) AFTER \(after.toCommandString())", callback: callback)
+		sendCommand(name: "LINSERT \(key) AFTER \(after.commandString)", callback: callback)
 	}
 	
 	/// Set the item at index to value.
 	func listSet(key: String, index: Int, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LSET \(key) \(index) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "LSET \(key) \(index) \(value.commandString)", callback: callback)
 	}
 	
 	/// Remove the first N elements matching value.
 	func listRemoveMatching(key: String, value: RedisValue, count: Int, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "LREM \(key) \(count) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "LREM \(key) \(count) \(value.commandString)", callback: callback)
 	}
-	
+}
+
+/// List related operations sync
+public extension RedisClient {
 	/// Push values to the beginning of the list
 	func listPrepend(key: String, values: [RedisValue]) throws -> RedisResponse {
-		return try sendCommand(name: "LPUSH \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))")
+		return try sendCommand(name: "LPUSH \(key) \(values.map { $0.commandString }.joined(separator: " "))")
 	}
 	
 	/// Push values to the end of the list
 	func listAppend(key: String, values: [RedisValue]) throws -> RedisResponse {
-		return try sendCommand(name: "RPUSH \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))")
+		return try sendCommand(name: "RPUSH \(key) \(values.map { $0.commandString }.joined(separator: " "))")
 	}
 	
 	/// Push value to the beginning of the list. LPUSHX
 	func listPrependX(key: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "LPUSHX \(key) \(value.toCommandString())")
+		return try sendCommand(name: "LPUSHX \(key) \(value.commandString)")
 	}
 	
 	/// Push value to the end of the list. RPUSHX
 	func listAppendX(key: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "RPUSHX \(key) \(value.toCommandString())")
+		return try sendCommand(name: "RPUSHX \(key) \(value.commandString)")
 	}
 	
 	/// Pop and return the first element from the list
@@ -1137,11 +1188,6 @@ public extension RedisClient {
 	/// Pop and return the last element from the list
 	func listPopLast(key: String) throws -> RedisResponse {
 		return try sendCommand(name: "RPOP \(key)")
-	}
-	
-	/// Pop and return the first element from the list
-	func listPopFirstAppend(key: String) throws -> RedisResponse {
-		return try sendCommand(name: "LPOP \(key)")
 	}
 	
 	/// Pop and return the last element from the list. Append the element to the destination list.
@@ -1186,22 +1232,22 @@ public extension RedisClient {
 	
 	/// Inserts the new item before the indicated value.
 	func listInsert(key: String, element: RedisValue, before: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "LINSERT \(key) BEFORE \(before.toCommandString())")
+		return try sendCommand(name: "LINSERT \(key) BEFORE \(before.commandString)")
 	}
 	
 	/// Inserts the new item after the indicated value.
 	func listInsert(key: String, element: RedisValue, after: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "LINSERT \(key) AFTER \(after.toCommandString())")
+		return try sendCommand(name: "LINSERT \(key) AFTER \(after.commandString)")
 	}
 	
 	/// Set the item at index to value.
 	func listSet(key: String, index: Int, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "LSET \(key) \(index) \(value.toCommandString())")
+		return try sendCommand(name: "LSET \(key) \(index) \(value.commandString)")
 	}
 	
 	/// Remove the first N elements matching value.
 	func listRemoveMatching(key: String, value: RedisValue, count: Int) throws -> RedisResponse {
-		return try sendCommand(name: "LREM \(key) \(count) \(value.toCommandString())")
+		return try sendCommand(name: "LREM \(key) \(count) \(value.commandString)")
 	}
 }
 
@@ -1257,6 +1303,18 @@ public extension RedisClient {
 	func multiUnwatch() throws -> RedisResponse {
 		return try sendCommand(name: "UNWATCH")
 	}
+	
+	/// Execute commands in body. Discard if error is thrown
+	func multi(body: () throws -> ()) throws -> RedisResponse {
+		_ = try multiBegin()
+		do {
+			try body()
+			return try multiExec()
+		} catch {
+			_ = try multiDiscard()
+			throw error
+		}
+	}
 }
 
 /// Pub/sub related operations.
@@ -1283,7 +1341,7 @@ public extension RedisClient {
 	
 	/// Publish a message to the channel.
 	func publish(channel: String, message: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "PUBLISH \(channel) \(message.toCommandString())", callback: callback)
+		sendCommand(name: "PUBLISH \(channel) \(message.commandString)", callback: callback)
 	}
 	
 	/// Subscribe to the following patterns.
@@ -1307,7 +1365,7 @@ public extension RedisClient {
 	
 	/// Publish a message to the channel.
 	func publish(channel: String, message: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "PUBLISH \(channel) \(message.toCommandString())")
+		return try sendCommand(name: "PUBLISH \(channel) \(message.commandString)")
 	}
 	
 	/// Read a published message given a timeout.
@@ -1333,7 +1391,7 @@ public extension RedisClient {
 	
 	/// Inserts the new elements into the set.
 	func setAdd(key: String, elements: [RedisValue], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "SADD \(key) \(elements.map { $0.toCommandString() }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "SADD \(key) \(elements.map { $0.commandString }.joined(separator: " "))", callback: callback)
 	}
 	
 	/// Returns the number of elements in the set.
@@ -1373,7 +1431,7 @@ public extension RedisClient {
 	
 	/// Checks if the set `key` contains `value`.
 	func setContains(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "SISMEMBER \(key) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "SISMEMBER \(key) \(value.commandString)", callback: callback)
 	}
 	
 	/// Returns the members of set `key`.
@@ -1383,7 +1441,7 @@ public extension RedisClient {
 	
 	/// Moves the set `value` `fromKey` to `toKey`.
 	func setMove(fromKey: String, toKey: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.commandString)", callback: callback)
 	}
 	
 	/// Removes and returns `count` random elements of set `key`.
@@ -1408,12 +1466,12 @@ public extension RedisClient {
 	
 	/// Removes the value from set `key`.
 	func setRemove(key: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "SREM \(key) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "SREM \(key) \(value.commandString)", callback: callback)
 	}
 	
 	/// Removes the values from set `key`.
 	func setRemove(key: String, values: [RedisValue], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "SREM \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "SREM \(key) \(values.map { $0.commandString }.joined(separator: " "))", callback: callback)
 	}
 	
 	/// Scans the set `key` given the current cursor, which should start from zero.
@@ -1424,7 +1482,7 @@ public extension RedisClient {
 	
 	/// Inserts the new elements into the set.
 	func setAdd(key: String, elements: [RedisValue]) throws -> RedisResponse {
-		return try sendCommand(name: "SADD \(key) \(elements.map { $0.toCommandString() }.joined(separator: " "))")
+		return try sendCommand(name: "SADD \(key) \(elements.map { $0.commandString }.joined(separator: " "))")
 	}
 	
 	/// Returns the number of elements in the set.
@@ -1464,7 +1522,7 @@ public extension RedisClient {
 	
 	/// Checks if the set `key` contains `value`.
 	func setContains(key: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "SISMEMBER \(key) \(value.toCommandString())")
+		return try sendCommand(name: "SISMEMBER \(key) \(value.commandString)")
 	}
 	
 	/// Returns the members of set `key`.
@@ -1474,7 +1532,7 @@ public extension RedisClient {
 	
 	/// Moves the set `value` `fromKey` to `toKey`.
 	func setMove(fromKey: String, toKey: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.toCommandString())")
+		return try sendCommand(name: "SMOVE \(fromKey) \(toKey) \(value.commandString)")
 	}
 	
 	/// Removes and returns `count` random elements of set `key`.
@@ -1499,12 +1557,12 @@ public extension RedisClient {
 	
 	/// Removes the value from set `key`.
 	func setRemove(key: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "SREM \(key) \(value.toCommandString())")
+		return try sendCommand(name: "SREM \(key) \(value.commandString)")
 	}
 	
 	/// Removes the values from set `key`.
 	func setRemove(key: String, values: [RedisValue]) throws -> RedisResponse {
-		return try sendCommand(name: "SREM \(key) \(values.map { $0.toCommandString() }.joined(separator: " "))")
+		return try sendCommand(name: "SREM \(key) \(values.map { $0.commandString }.joined(separator: " "))")
 	}
 	
 	/// Scans the set `key` given the current cursor, which should start from zero.
@@ -1534,17 +1592,17 @@ public extension RedisClient {
 	
 	/// Set field in the hash stored at key to value.
 	func hashSet(key: String, field: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "HSET \(key) \(field) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "HSET \(key) \(field) \(value.commandString)", callback: callback)
 	}
 	
 	/// Set multiple field value pairs in an atomic operation
 	func hashSet(key: String, fieldsValues: [(String, RedisValue)], callback: @escaping redisResponseCallback) {
-		sendCommand(name: "HMSET \(key) \(fieldsValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))", callback: callback)
+		sendCommand(name: "HMSET \(key) \(fieldsValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))", callback: callback)
 	}
 	
 	/// Set a field value pair if not exists
 	func hashSetIfNonExists(key: String, field: String, value: RedisValue, callback: @escaping redisResponseCallback) {
-		sendCommand(name: "HSETNX \(key) \(field) \(value.toCommandString())", callback: callback)
+		sendCommand(name: "HSETNX \(key) \(field) \(value.commandString)", callback: callback)
 	}
 	
 	/// Get a field in the hash stored at key.
@@ -1618,17 +1676,17 @@ public extension RedisClient {
 	
 	/// Set field in the hash stored at key to value.
 	func hashSet(key: String, field: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "HSET \(key) \(field) \(value.toCommandString())")
+		return try sendCommand(name: "HSET \(key) \(field) \(value.commandString)")
 	}
 	
 	/// Set multiple field value pairs in an atomic operation
 	func hashSet(key: String, fieldsValues: [(String, RedisValue)]) throws -> RedisResponse {
-		return try sendCommand(name: "HMSET \(key) \(fieldsValues.map { "\($0.0) \($0.1.toCommandString())" }.joined(separator: " "))")
+		return try sendCommand(name: "HMSET \(key) \(fieldsValues.map { "\($0.0) \($0.1.commandString)" }.joined(separator: " "))")
 	}
 	
 	/// Set a field value pair if not exists
 	func hashSetIfNonExists(key: String, field: String, value: RedisValue) throws -> RedisResponse {
-		return try sendCommand(name: "HSETNX \(key) \(field) \(value.toCommandString())")
+		return try sendCommand(name: "HSETNX \(key) \(field) \(value.commandString)")
 	}
 	
 	/// Get a field in the hash stored at key.
@@ -1656,6 +1714,9 @@ public extension RedisClient {
 	Otherwise the command returns the number of fields that have been deleted
 	*/
 	func hashDel(key: String, fields: String...) throws -> RedisResponse {
+		return try sendCommand(name: "HDEL \(key) \(fields.joined(separator: " "))")
+	}
+	func hashDel(key: String, fields: [String]) throws -> RedisResponse {
 		return try sendCommand(name: "HDEL \(key) \(fields.joined(separator: " "))")
 	}
 	

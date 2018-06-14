@@ -19,13 +19,6 @@ extension RedisClient {
 }
 
 public extension RedisClient {
-	public struct CommandError: Error, CustomStringConvertible {
-		public let description: String
-		init(_ msg: String) {
-			description = msg
-		}
-	}
-	
 	static func getClient(withIdentifier: RedisClientIdentifier) throws -> RedisClient {
 		let net = withIdentifier.netGenerator()
 		let sync = Promise<RedisClient> {
@@ -70,7 +63,7 @@ public extension RedisClient {
 	public func sendCommandAsRESP(name: String, parameters: [String]) throws -> RedisResponse {
 		var array = [RedisResponse.bulkString(name.bytes)]
 		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
-		return try sendRawCommand(bytes: RedisResponse.array(array).toBytes())
+		return try sendRawCommand(bytes: RedisResponse.array(array).bytes)
 	}
 	
 	func sendRawCommand(bytes: [UInt8]) throws -> RedisResponse {
