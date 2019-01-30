@@ -23,7 +23,7 @@ let package = Package(
     name: "PerfectRedis",
     targets: [],
     dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.2")
+        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.3")
     ],
     exclude: []
 )
