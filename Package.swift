@@ -1,3 +1,4 @@
+// swift-tools-version:4.0
 //
 //  Package.swift
 //  Perfect-Redis
@@ -21,9 +22,11 @@ import PackageDescription
 
 let package = Package(
     name: "PerfectRedis",
-    targets: [],
-    dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.3")
+    products: [
+        .library(name: "PerfectRedis", targets: ["PerfectRedis"])
     ],
-    exclude: []
+    targets: [
+        .target(name: "PerfectRedis", dependencies: []),
+        .testTarget(name: "PerfectRedisTests", dependencies: ["PerfectRedis"])
+    ]
 )
