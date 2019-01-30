@@ -62,7 +62,7 @@ public extension RedisClient {
 	// Send command as serialized in RESP format: See https://redis.io/topics/protocol
 	public func sendCommandAsRESP(name: String, parameters: [String]) throws -> RedisResponse {
 		var array = [RedisResponse.bulkString(name.bytes)]
-		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
+		array.append(contentsOf: parameters.compactMap({ RedisResponse.bulkString($0.bytes) }))
 		return try sendRawCommand(bytes: RedisResponse.array(array).bytes)
 	}
 	
