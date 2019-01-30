@@ -31,4 +31,5 @@ let package = Package(
     targets: [
         .target(name: "PerfectRedis", dependencies: ["PerfectNet"], path: "Sources"),
         .testTarget(name: "PerfectRedisTests", dependencies: ["PerfectNet", "PerfectRedis"])
+    ]
 )
