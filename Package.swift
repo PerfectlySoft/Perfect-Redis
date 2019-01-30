@@ -3,7 +3,7 @@
 //  Perfect-Redis
 //
 //  Created by Kyle Jessup on 2016-06-03.
-//	Copyright (C) 2016 PerfectlySoft, Inc.
+//	Copyright (C) 2016-2019 PerfectlySoft, Inc.
 //
 //===----------------------------------------------------------------------===//
 //
@@ -23,7 +23,7 @@ let package = Package(
     name: "PerfectRedis",
     targets: [],
     dependencies: [
-        .Package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", majorVersion: 3)
+        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.2")
     ],
     exclude: []
 )
