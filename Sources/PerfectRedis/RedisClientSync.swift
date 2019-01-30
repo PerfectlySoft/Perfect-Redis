@@ -48,24 +48,28 @@ public extension RedisClient {
 		}
 		return ret
 	}
-	
+
 	public func sendCommand(name: String, parameters: [RedisResponse]) throws -> RedisResponse {
 		let a = commandBytes(name: name, parameters: parameters)
 		return try sendRawCommand(bytes: a)
 	}
-	
+
 	public func sendCommand(name: String) throws -> RedisResponse {
 		let a = commandBytes(name: name)
 		return try sendRawCommand(bytes: a)
 	}
-	
+
 	// Send command as serialized in RESP format: See https://redis.io/topics/protocol
 	public func sendCommandAsRESP(name: String, parameters: [String]) throws -> RedisResponse {
 		var array = [RedisResponse.bulkString(name.bytes)]
-		array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
+		#if swift(>=4.1)
+			array.append(contentsOf: parameters.compactMap({ RedisResponse.bulkString($0.bytes) }))
+		#else
+			array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
+		#endif
 		return try sendRawCommand(bytes: RedisResponse.array(array).bytes)
 	}
-	
+
 	func sendRawCommand(bytes: [UInt8]) throws -> RedisResponse {
 		let sync = Promise<RedisResponse> {
 			(sync: Promise) in
