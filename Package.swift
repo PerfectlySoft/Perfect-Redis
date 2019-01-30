@@ -1,9 +1,10 @@
+// swift-tools-version:4.0
 //
 //  Package.swift
 //  Perfect-Redis
 //
 //  Created by Kyle Jessup on 2016-06-03.
-//	Copyright (C) 2016 PerfectlySoft, Inc.
+//	Copyright (C) 2016-2019 PerfectlySoft, Inc.
 //
 //===----------------------------------------------------------------------===//
 //
@@ -21,9 +22,14 @@ import PackageDescription
 
 let package = Package(
     name: "PerfectRedis",
-    targets: [],
-    dependencies: [
-        .Package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", majorVersion: 3)
+    products: [
+        .library(name: "PerfectRedis", targets: ["PerfectRedis"])
     ],
-    exclude: []
+    dependencies: [
+        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.1")
+    ],
+    targets: [
+        .target(name: "PerfectRedis", dependencies: ["PerfectNet"]),
+        .testTarget(name: "PerfectRedisTests", dependencies: ["PerfectNet", "PerfectRedis"])
+    ]
 )
