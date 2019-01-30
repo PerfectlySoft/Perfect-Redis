@@ -29,7 +29,7 @@ let package = Package(
         .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.1")
     ],
     targets: [
-        .target(name: "PerfectRedis", dependencies: ["PerfectNet"]),
+        .target(name: "PerfectRedis", dependencies: ["PerfectNet"], path: "Sources"),
         .testTarget(name: "PerfectRedisTests", dependencies: ["PerfectNet", "PerfectRedis"])
     ]
 )
