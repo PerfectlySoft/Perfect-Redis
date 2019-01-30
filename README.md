@@ -121,7 +121,7 @@ RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
 Add this project as a dependency in your Package.swift file.
 
 ```
-.package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", from: "3.2.2")
+.package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", from: "3.2.3")
 ```
 
 ## Further Information
