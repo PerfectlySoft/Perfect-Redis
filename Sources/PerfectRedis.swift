@@ -409,7 +409,7 @@ public class RedisClient {
 	public func sendCommandAsRESP(name: String, parameters: [String], callback: @escaping redisResponseCallback) {
 
 		var array = [RedisResponse.bulkString(name.bytes)]
-		#if swift(>=4.0)
+		#if swift(>=4.1)
 			array.append(contentsOf: parameters.compactMap({ RedisResponse.bulkString($0.bytes) }))
 		#else
 			array.append(contentsOf: parameters.flatMap({ RedisResponse.bulkString($0.bytes) }))
