@@ -123,7 +123,7 @@ class PerfectRedisTests: XCTestCase {
     }
     
     func testSetGet() {
-        let (key, value) = ("mykey", "myvalue")
+        let (key, value) = ("my key", "myvalue")
         let expectation = self.expectation(description: "RedisClient")
         RedisClient.getClient(withIdentifier: clientIdentifier()) {
             c in
