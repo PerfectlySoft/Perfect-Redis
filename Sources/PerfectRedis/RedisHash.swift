@@ -14,7 +14,7 @@ public struct RedisHash {
 	let client: RedisClient
 	let name: String
 	public var exists: Bool {
-		return 1 == (try? client.exists(keys: name))?.integer ?? 0
+		return 0 != (try? client.exists(keys: name))?.integer ?? 0
 	}
 	public var count: Int {
 		return (try? client.hashLength(key: name))?.integer ?? 0
