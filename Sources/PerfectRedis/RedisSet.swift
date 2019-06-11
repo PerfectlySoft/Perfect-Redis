@@ -24,7 +24,7 @@ public extension RedisClient {
 
 extension RedisSet {
 	public var exists: Bool {
-		return 1 == (try? client.exists(keys: name))?.integer ?? 0
+		return 0 != (try? client.exists(keys: name))?.integer ?? 0
 	}
 	public var count: Int {
 		return (try? client.setCount(key: name))?.integer ?? 0
