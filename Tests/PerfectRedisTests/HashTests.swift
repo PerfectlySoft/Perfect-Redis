@@ -35,7 +35,7 @@ class HashTests: XCTestCase {
                 let client = try c()
                 client.hashSet(key: key, field: field, value: .string(value)) {
                     response in
-                    guard case .integer(let result) = response else {
+                    guard case .integer(_) = response else {
                         XCTFail("Unexpected response \(response)")
                         expectation.fulfill()
                         return
@@ -313,7 +313,7 @@ class HashTests: XCTestCase {
                 let client = try c()
                 client.hashSet(key: key, field: field, value: .string(value)) {
                     response in
-                    guard case .integer(let result) = response else {
+                    guard case .integer(_) = response else {
                         XCTFail("Unexpected response \(response)")
                         expectation.fulfill()
                         return
