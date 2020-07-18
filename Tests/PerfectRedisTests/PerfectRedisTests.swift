@@ -22,10 +22,8 @@ class PerfectRedisTests: XCTestCase {
             
             do {
                 let client = try c()
-                defer {
-                    RedisClient.releaseClient(client)
-                    expectation.fulfill()
-                }
+                RedisClient.releaseClient(client)
+                expectation.fulfill()
             } catch {
                 XCTAssert(false, "Could not connect to server \(error)")
                 expectation.fulfill()
@@ -334,7 +332,7 @@ class PerfectRedisTests: XCTestCase {
                 let client = try c()
                 client.set(key: key, value: .string(value)) {
                     response in
-                    guard case .simpleString(let s) = response else {
+                    guard case .simpleString(_) = response else {
                         XCTAssert(false, "Unexpected response \(response)")
                         expectation.fulfill()
                         return
