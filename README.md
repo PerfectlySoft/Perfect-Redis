@@ -1,128 +1,96 @@
 # Perfect-Redis [简体中文](README.zh_CN.md)
 
 <p align="center">
-    <a href="http://perfect.org/get-involved.html" target="_blank">
-        <img src="http://perfect.org/assets/github/perfect_github_2_0_0.jpg" alt="Get Involed with Perfect!" width="854" />
-    </a>
-</p>
-
-<p align="center">
-    <a href="https://github.com/PerfectlySoft/Perfect" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_1_Star.jpg" alt="Star Perfect On Github" />
-    </a>
-    <a href="http://stackoverflow.com/questions/tagged/perfect" target="_blank">
-        <img src="http://www.perfect.org/github/perfect_gh_button_2_SO.jpg" alt="Stack Overflow" />
-    </a>
-    <a href="https://twitter.com/perfectlysoft" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_3_twit.jpg" alt="Follow Perfect on Twitter" />
-    </a>
-    <a href="http://perfect.ly" target="_blank">
-        <img src="http://www.perfect.org/github/Perfect_GH_button_4_slack.jpg" alt="Join the Perfect Slack" />
-    </a>
-</p>
-
-<p align="center">
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-4.0-orange.svg?style=flat" alt="Swift 4.0">
+        <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-OS%20X%20%7C%20Linux%20-lightgray.svg?style=flat" alt="Platforms OS X | Linux">
+        <img src="https://img.shields.io/badge/Platforms-macOS%2026%2B-lightgray.svg?style=flat" alt="Platforms macOS 26+">
     </a>
     <a href="http://perfect.org/licensing.html" target="_blank">
         <img src="https://img.shields.io/badge/License-Apache-lightgrey.svg?style=flat" alt="License Apache">
     </a>
-    <a href="http://twitter.com/PerfectlySoft" target="_blank">
-        <img src="https://img.shields.io/badge/Twitter-@PerfectlySoft-blue.svg?style=flat" alt="PerfectlySoft Twitter">
-    </a>
-    <a href="http://perfect.ly" target="_blank">
-        <img src="http://perfect.ly/badge.svg" alt="Slack Status">
-    </a>
 </p>
 
-Redis client support for Perfect
+Async/await Redis client support for Perfect, built on [swift-server/RediStack](https://github.com/swift-server/RediStack).
+
+## Status
+
+This is a Swift 6 resurrection/rewrite of the original PerfectlySoft `Perfect-Redis` package. The old synchronous/completion-handler API has been **deliberately removed** — `Sources/PerfectRedis/RedisClientSync.swift` is now a one-line stub confirming this. The public API is a Swift `actor` (`RedisClient`) with a fully `async throws` surface, layered on top of RediStack's NIO-based Redis client rather than a hand-rolled RESP implementation.
+
+This package is a real, tested dependency inside the [Perfect-Resurrection](https://github.com/taplin/Perfect-Resurrection) ecosystem: [Perfect-Session](https://github.com/taplin/Perfect-Session)'s `PerfectSessionRedis` module (`RedisSessionDriver.swift`) imports it directly and implements a full `SessionDriver` backend with it. It is **not** the backend currently wired into the live scrubsSite production deployment (that uses MySQL via `PerfectSessionMySQL`) — Redis is a fully implemented, tested alternative available for a future backend swap, not currently the selected backend.
+
+`Package.swift` declares `swift-tools-version: 6.2` and `platforms: [.macOS(.v26)]`, with `.swiftLanguageMode(.v6)` (full Swift 6 strict concurrency) on both the library and test targets. **No Linux, iOS, tvOS, or watchOS platforms are declared** — this is macOS-only today. The default branch is `main`.
 
 ## Quick Start
 
-Get a redis client with defaults (localhost, default port):
+Connect a Redis client with defaults (localhost, default port):
 
 ```swift
-let client = RedisClient.getClient(withIdentifier: RedisClientIdentifier())
+import PerfectRedis
 
+let client = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
 ```
 
 Ping the server:
 
 ```swift
-let response = client.ping()
+let response = try await client.ping()
 guard case .simpleString(let s) = response else {
-	return
+    return
 }
-XCTAssert(s == "PONG", "Unexpected response \(response)")
+assert(s == "PONG", "Unexpected response \(response)")
 ```
 
 Set/get a value:
 
 ```swift
 let (key, value) = ("mykey", "myvalue")
-var response = client.set(key: key, value: .string(value))
-guard case .simpleString(let s) = response else {
-	...
-	return
+var response = try await client.set(key: key, value: .string(value))
+guard case .simpleString = response else {
+    // handle error
+    return
 }
-response = client.get(key: key)
+response = try await client.get(key: key)
 guard case .bulkString = response else {
-	...
-	return
+    // handle error
+    return
 }
-let s = response.toString()
-XCTAssert(s == value, "Unexpected response \(response)")
+let s = response.string
+assert(s == value, "Unexpected response \(response)")
 ```
 
-Pub/sub with two clients using async API:
+Pub/sub with two clients (no callback nesting — every call is plain `async throws`):
 
 ```swift
-RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
-	c in
-	do {
-		let client1 = try c()
-		RedisClient.getClient(withIdentifier: RedisClientIdentifier()) {
-			c in
-			do {
-				let client2 = try c()
-				client1.subscribe(channels: ["foo"]) {
-					response in
-					client2.publish(channel: "foo", message: .string("Hello!")) {
-						response in
-						client1.readPublished(timeoutSeconds: 5.0) {
-							response in
-							guard case .array(let array) = response else {
-								...
-								return
-							}
-							XCTAssert(array.count == 3, "Invalid array elements")
-							XCTAssert(array[0].toString() == "message")
-							XCTAssert(array[1].toString() == "foo")
-							XCTAssert(array[2].toString() == "Hello!")
-						}
-					}
-				}
-			} catch {
-				...
-			}
-		}
-	} catch {
-		...
-	}
-}
+let client1 = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
+let client2 = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
+
+try await client1.subscribe(channels: ["foo"])
+try await client2.publish(channel: "foo", message: .string("Hello!"))
 ```
+
+`RedisClient` is a Swift `actor`; `RedisResponse` and the other public value types (`RedisClientIdentifier`, `RedisValue`, and the `RedisHash`/`RedisList`/`RedisSet` wrappers) are `Sendable`. There is no synchronous or completion-handler API anywhere in the module.
 
 ## Building
 
-Add this project as a dependency in your Package.swift file.
+This package lives in the Perfect-Resurrection workspace and is normally consumed as a local sibling checkout, not pulled from the original PerfectlySoft GitHub repository. Add it as a dependency in your `Package.swift`:
 
+```swift
+dependencies: [
+    .package(path: "../Perfect-Redis"),
+],
+targets: [
+    .target(
+        name: "YourTarget",
+        dependencies: [
+            .product(name: "PerfectRedis", package: "Perfect-Redis"),
+        ]
+    ),
+]
 ```
-.package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", from: "3.2.3")
-```
+
+`PerfectRedis` in turn depends on [`RediStack`](https://github.com/swift-server/RediStack) (`from: "1.6.0"`), resolved automatically from GitHub — no additional sibling checkout is required for that dependency.
 
 ## Further Information
 For more information on the Perfect project, please visit [perfect.org](http://perfect.org).
