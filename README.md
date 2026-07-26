@@ -5,7 +5,7 @@
         <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-macOS%2026%2B-lightgray.svg?style=flat" alt="Platforms macOS 26+">
+        <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
     </a>
     <a href="http://perfect.org/licensing.html" target="_blank">
         <img src="https://img.shields.io/badge/License-Apache-lightgrey.svg?style=flat" alt="License Apache">
@@ -74,11 +74,11 @@ try await client2.publish(channel: "foo", message: .string("Hello!"))
 
 ## Building
 
-This package lives in the Perfect-Resurrection workspace and is normally consumed as a local sibling checkout, not pulled from the original PerfectlySoft GitHub repository. Add it as a dependency in your `Package.swift`:
+This package lives in the Perfect-Resurrection workspace and is a fork of the original PerfectlySoft GitHub repository, not that repository itself. Add it as a dependency in your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(path: "../Perfect-Redis"),
+    .package(url: "https://github.com/taplin/Perfect-Redis.git", branch: "main"),
 ],
 targets: [
     .target(
