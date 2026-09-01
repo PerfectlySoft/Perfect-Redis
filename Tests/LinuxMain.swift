@@ -1,7 +1,1 @@
-import XCTest
-@testable import PerfectRedisTests
-
-XCTMain([
-     testCase(PerfectRedisTests.allTests),
-     testCase(HashTests.allTests)
-])
+// Removed — Linux discovery manifest not needed with Swift Testing.

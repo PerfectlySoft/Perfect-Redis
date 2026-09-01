@@ -1,56 +1,43 @@
-//
-//  RedisSet.swift
-//  RoboRepNotifications
-//
-//  Created by Kyle Jessup on 2019-06-06.
-//
+// Convenience wrapper — async methods over a named set key.
+public struct RedisSet: Sendable {
+    private let client: RedisClient
+    public let key: String
 
-import Foundation
+    public init(client: RedisClient, key: String) {
+        self.client = client
+        self.key = key
+    }
 
-public struct RedisSet {
-	let client: RedisClient
-	let name: String
-	public init(_ client: RedisClient, name: String) {
-		self.client = client
-		self.name = name
-	}
-}
-
-public extension RedisClient {
-	func set(named: String) -> RedisSet {
-		return RedisSet(self, name: named)
-	}
-}
-
-extension RedisSet {
-	public var exists: Bool {
-		return 0 != (try? client.exists(keys: name))?.integer ?? 0
-	}
-	public var count: Int {
-		return (try? client.setCount(key: name))?.integer ?? 0
-	}
-	public var isEmpty: Bool {
-		return count == 0
-	}
-	public func contains(_ value: String) -> Bool {
-		return 1 == (try? client.setContains(key: name, value: .string(value)))?.integer ?? 0
-	}
-	public func insert(_ value: String) {
-		_ = try? client.setAdd(key: name, elements: [.string(value)])
-	}
-	public func remove(_ value: String) {
-		_ = try? client.setRemove(key: name, value: .string(value))
-	}
-	public func values() -> [String] {
-		guard let resp = try? client.setMembers(key: name) else {
-			return []
-		}
-		if case .array(let a) = resp {
-			return a.compactMap { $0.string }
-		}
-		if let s = resp.string {
-			return [s]
-		}
-		return []
-	}
+    public func add(_ elements: RedisClient.RedisValue...) async throws -> RedisResponse {
+        try await client.setAdd(key: key, elements: elements)
+    }
+    public func add(_ elements: [RedisClient.RedisValue]) async throws -> RedisResponse {
+        try await client.setAdd(key: key, elements: elements)
+    }
+    public func remove(_ value: RedisClient.RedisValue) async throws -> RedisResponse {
+        try await client.setRemove(key: key, value: value)
+    }
+    public func remove(_ values: [RedisClient.RedisValue]) async throws -> RedisResponse {
+        try await client.setRemove(key: key, values: values)
+    }
+    public func contains(_ value: RedisClient.RedisValue) async throws -> RedisResponse {
+        try await client.setContains(key: key, value: value)
+    }
+    public func members() async throws -> RedisResponse {
+        try await client.setMembers(key: key)
+    }
+    public func count() async throws -> RedisResponse {
+        try await client.setCount(key: key)
+    }
+    public func randomPop(count: Int? = nil) async throws -> RedisResponse {
+        if let count { return try await client.setRandomPop(key: key, count: count) }
+        return try await client.setRandomPop(key: key)
+    }
+    public func randomGet(count: Int? = nil) async throws -> RedisResponse {
+        if let count { return try await client.setRandomGet(key: key, count: count) }
+        return try await client.setRandomGet(key: key)
+    }
+    public func scan(cursor: Int = 0, pattern: String? = nil, count: Int? = nil) async throws -> RedisResponse {
+        try await client.setScan(key: key, cursor: cursor, pattern: pattern, count: count)
+    }
 }

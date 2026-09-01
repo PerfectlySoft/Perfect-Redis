@@ -1,35 +1,27 @@
-// swift-tools-version:4.0
-//
-//  Package.swift
-//  Perfect-Redis
-//
-//  Created by Kyle Jessup on 2016-06-03.
-//	Copyright (C) 2016-2019 PerfectlySoft, Inc.
-//
-//===----------------------------------------------------------------------===//
-//
-// This source file is part of the Perfect.org open source project
-//
-// Copyright (c) 2015 - 2016 PerfectlySoft Inc. and the Perfect project authors
-// Licensed under Apache License v2.0
-//
-// See http://perfect.org/licensing.html for license information
-//
-//===----------------------------------------------------------------------===//
-//
-
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "PerfectRedis",
+    platforms: [.macOS(.v12)],
     products: [
-        .library(name: "PerfectRedis", targets: ["PerfectRedis"])
+        .library(name: "PerfectRedis", targets: ["PerfectRedis"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-Net.git", from: "3.2.1")
+        .package(url: "https://github.com/swift-server/RediStack.git", from: "1.6.0"),
     ],
     targets: [
-        .target(name: "PerfectRedis", dependencies: ["PerfectNet"]),
-        .testTarget(name: "PerfectRedisTests", dependencies: ["PerfectNet", "PerfectRedis"])
+        .target(
+            name: "PerfectRedis",
+            dependencies: [
+                .product(name: "RediStack", package: "RediStack"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "PerfectRedisTests",
+            dependencies: ["PerfectRedis"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )

@@ -1,479 +1,171 @@
-import XCTest
-@testable import PerfectNet
-import PerfectThread
+import Foundation
+import Testing
 @testable import PerfectRedis
 
-class HashTests: XCTestCase {
+@Suite(.serialized)
+struct HashTests {
 
-    override func setUp() {
-        NetEvent.initialize()
-    }
-
-    override func tearDown() {
-        super.tearDown()
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.flushAll() { _ in }
-            } catch {
-                print("Failed to clean up after test \(error)")
-            }
-        }
-    }
-
-    func clientIdentifier() -> RedisClientIdentifier {
-        return RedisClientIdentifier()
-    }
-
-    func testHashSetHashGet() {
+    @Test func hashSetGet() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let (key, field, value) = ("mykey", "myfield", "myvalue")
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, field: field, value: .string(value)) {
-                    response in
-                    guard case .integer(let result) = response else {
-                        XCTFail("Unexpected response \(response)")
-                        expectation.fulfill()
-                        return
-                    }
-                    client.hashGet(key: key, field: field) {
-                        response in
-                        defer {
-                            RedisClient.releaseClient(client)
-                            expectation.fulfill()
-                        }
-                        guard case .bulkString = response else {
-                            XCTFail("Unexpected response \(response)")
-                            return
-                        }
-                        let s = response.string
-                        XCTAssertEqual(s, value, "Unexpected response \(response)")
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        let setR = try await client.hashSet(key: key, field: field, value: .string(value))
+        guard case .integer = setR else {
+            Issue.record("Expected integer response from HSET, got \(setR)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        let getR = try await client.hashGet(key: key, field: field)
+        #expect(getR.string == value)
     }
 
-    /**
-    the test sets a field for a hash then:
-     - checks for existance of that field in the hash
-     - checks if the field can be removed from the hash
-     - checks that the field does not exist anymore
-     - checks that the field cannot be removed once it does not exist
-    */
-    func testHashDelAndHashExist() {
+    @Test func hashDelAndHashExist() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let (key, field, value) = ("mykey", "myfield", "myvalue")
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, field: field, value: .string(value)) {
-                    _ in
-                    client.hashExists(key: key, field: field) {
-                        response in
-                        let s = response.string
-                        XCTAssertEqual(s, "1", "Unexpected response \(response)")
-                        client.hashDel(key: key, fields: field) {
-                            response in
-                            let s = response.string
-                            XCTAssertEqual(s, "1", "Unexpected response \(response)")
-                            client.hashExists(key: key, field: field) {
-                                response in
-                                let s = response.string
-                                XCTAssertEqual(s, "0", "Unexpected response \(response)")
-                                client.hashDel(key: key, fields: field) {
-                                    response in
-                                    defer {
-                                        RedisClient.releaseClient(client)
-                                        expectation.fulfill()
-                                    }
-                                    let s = response.string
-                                    XCTAssertEqual(s, "0", "Unexpected response \(response)")
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
-        }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        _ = try await client.hashSet(key: key, field: field, value: .string(value))
+        let exists1 = try await client.hashExists(key: key, field: field)
+        #expect(exists1.integer == 1)
+        let del1 = try await client.hashDel(key: key, fields: field)
+        #expect(del1.integer == 1)
+        let exists2 = try await client.hashExists(key: key, field: field)
+        #expect(exists2.integer == 0)
+        let del2 = try await client.hashDel(key: key, fields: field)
+        #expect(del2.integer == 0)
     }
 
-    func testHashMultiSetAndHashGetAll() {
+    @Test func hashMultiSetAndGetAll() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let key = "mykey"
-        let hashFieldsValues: [(String, RedisClient.RedisValue)] = [
-            ("myfield", .string("myvalue")),
-            ("myfield2", .string("myvalue2"))
-        ]
-        let expectedDict = ["myfield": "myvalue", "myfield2": "myvalue2"]
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, fieldsValues: hashFieldsValues) {
-                    response in
-                    client.hashGetAll(key: key) {
-                        response in
-                        defer {
-                            RedisClient.releaseClient(client)
-                            expectation.fulfill()
-                        }
-                        switch response {
-                            case .array(let a):
-                                XCTAssertEqual(4, a.count)
-                                var resultDict: [String: String] = [:]
-                                var ar = a
-                                while ar.count > 0 {
-                                    let value: String = ar.popLast()!.string!
-                                    let key: String = ar.popLast()!.string!
-                                    resultDict[key] = value
-                                }
-                                XCTAssertEqual(expectedDict, resultDict, "Unexpected dictionary returned \(resultDict)")
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        let fv: [(String, RedisClient.RedisValue)] = [("myfield", .string("myvalue")), ("myfield2", .string("myvalue2"))]
+        _ = try await client.hashSet(key: key, fieldsValues: fv)
+        let r = try await client.hashGetAll(key: key)
+        guard case .array(var a) = r else {
+            Issue.record("Expected array, got \(r)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
+        #expect(a.count == 4)
+        var dict: [String: String] = [:]
+        while a.count >= 2 {
+            let v = a.popLast()!.string!
+            let k = a.popLast()!.string!
+            dict[k] = v
         }
+        #expect(dict == ["myfield": "myvalue", "myfield2": "myvalue2"])
     }
 
-    func testHashMultiGet() {
+    @Test func hashMultiGet() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let key = "mykey"
-        let hashFieldsValues: [(String, RedisClient.RedisValue)] = [
-            ("myfield", .string("myvalue")),
-            ("myfield2", .string("myvalue2")),
-            ("myfield3", .string("myvalue3"))
+        let fv: [(String, RedisClient.RedisValue)] = [
+            ("myfield", .string("myvalue")), ("myfield2", .string("myvalue2")), ("myfield3", .string("myvalue3"))
         ]
-        let expectedValues = ["myvalue3", "myvalue2"]
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, fieldsValues: hashFieldsValues) {
-                    response in
-                    client.hashGet(key: key, fields: ["myfield3", "myfield2"]) {
-                        response in
-                        defer {
-                            RedisClient.releaseClient(client)
-                            expectation.fulfill()
-                        }
-                        switch response {
-                            case .array(let a):
-                                let resultArray: [String] = a.map { return $0.string! }
-                                XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        _ = try await client.hashSet(key: key, fieldsValues: fv)
+        let r = try await client.hashGet(key: key, fields: ["myfield3", "myfield2"])
+        guard case .array(let a) = r else {
+            Issue.record("Expected array, got \(r)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        #expect(a.map { $0.string } == ["myvalue3", "myvalue2"])
     }
 
-    func testHashKeysValuesLen() {
+    @Test func hashKeysValuesLen() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let key = "mykey"
-        let hashFieldsValues: [(String, RedisClient.RedisValue)] = [
-            ("myfield", .string("myvalue")),
-            ("myfield2", .string("myvalue2")),
-            ("myfield3", .string("myvalue3"))
+        let fv: [(String, RedisClient.RedisValue)] = [
+            ("myfield", .string("myvalue")), ("myfield2", .string("myvalue2")), ("myfield3", .string("myvalue3"))
         ]
-        let expectedKeys = hashFieldsValues.map { $0.0 }
-        let expectedValues = ["myvalue", "myvalue2", "myvalue3"]
-        let expectedLength = hashFieldsValues.count
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, fieldsValues: hashFieldsValues) {
-                    response in
-                    client.hashKeys(key: key) {
-                        response in
-                        switch response {
-                            case .array(let a):
-                                let resultArray: [String] = a.map { return $0.string! }
-                                XCTAssertEqual(expectedKeys, resultArray, "Unexpected array returned \(a)")
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-						client.hashValues(key: key) {
-							response in
-							switch response {
-								case .array(let a):
-									let resultArray: [String] = a.map { return $0.string! }
-									XCTAssertEqual(expectedValues, resultArray, "Unexpected array returned \(a)")
-								default:
-									XCTFail("Unexpected response \(response)")
-							}
-							client.hashLength(key: key) {
-								response in
-								switch response {
-									case .integer(let len):
-										XCTAssertEqual(expectedLength, len, "Unexpected integer returned \(len)")
-									default:
-										XCTFail("Unexpected response \(response)")
-								}
-								RedisClient.releaseClient(client)
-								expectation.fulfill()
-							}
-						}
-					}
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        _ = try await client.hashSet(key: key, fieldsValues: fv)
+        let keysR = try await client.hashKeys(key: key)
+        guard case .array(let ka) = keysR else {
+            Issue.record("Expected array for HKEYS, got \(keysR)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
+        #expect(Set(ka.compactMap { $0.string }) == Set(fv.map { $0.0 }))
+        let valsR = try await client.hashValues(key: key)
+        guard case .array(let va) = valsR else {
+            Issue.record("Expected array for HVALS, got \(valsR)"); return
         }
+        #expect(Set(va.compactMap { $0.string }) == Set(["myvalue", "myvalue2", "myvalue3"]))
+        let lenR = try await client.hashLength(key: key)
+        #expect(lenR.integer == 3)
     }
 
-    func testHashSetNX() {
+    @Test func hashSetNX() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let (key, field, value) = ("mykey", "myfield", "myvalue")
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSetIfNonExists(key: key, field: field, value: .string(value)) {
-                    response in
-                    guard case .integer(let result) = response , result == 1 else {
-                        XCTFail("Unexpected response \(response)")
-                        expectation.fulfill()
-                        return
-                    }
-                    client.hashSetIfNonExists(key: key, field: field, value: .string(value)) {
-                        response in
-                        defer {
-                            RedisClient.releaseClient(client)
-                            expectation.fulfill()
-                        }
-
-                        guard case .integer(let result) = response , result == 0 else {
-                            XCTFail("Unexpected response \(response)")
-                            expectation.fulfill()
-                            return
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
-        }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        let r1 = try await client.hashSetIfNonExists(key: key, field: field, value: .string(value))
+        #expect(r1.integer == 1)
+        let r2 = try await client.hashSetIfNonExists(key: key, field: field, value: .string(value))
+        #expect(r2.integer == 0)
     }
 
-    func testHashStrlen() {
+    @Test func hashStrlen() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let (key, field, value) = ("mykey", "myfield", "myvalue")
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, field: field, value: .string(value)) {
-                    response in
-                    guard case .integer(let result) = response else {
-                        XCTFail("Unexpected response \(response)")
-                        expectation.fulfill()
-                        return
-                    }
-                    client.hashStringLength(key: key, field: field) {
-                        response in
-                        guard case .integer(let result) = response , result == 7 else {
-                            XCTFail("Unexpected response \(response)")
-                            expectation.fulfill()
-                            return
-                        }
-
-                        client.hashStringLength(key: key, field: "nonexisting") {
-                            response in
-                            guard case .integer(let result) = response , result == 0 else {
-                                XCTFail("Unexpected response \(response)")
-                                expectation.fulfill()
-                                return
-                            }
-
-                            client.hashStringLength(key: "nonexisting", field: "nonexisting") {
-                                response in
-                                defer {
-                                    RedisClient.releaseClient(client)
-                                    expectation.fulfill()
-                                }
-
-                                guard case .integer(let result) = response , result == 0 else {
-                                    XCTFail("Unexpected response \(response)")
-                                    expectation.fulfill()
-                                    return
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
-        }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        _ = try await client.hashSet(key: key, field: field, value: .string(value))
+        let r1 = try await client.hashStringLength(key: key, field: field)
+        #expect(r1.integer == 7)
+        let r2 = try await client.hashStringLength(key: key, field: "nonexisting")
+        #expect(r2.integer == 0)
+        let r3 = try await client.hashStringLength(key: "nonexisting", field: "nonexisting")
+        #expect(r3.integer == 0)
     }
 
-    func testHashIncrementBy() {
+    @Test func hashIncrementBy() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let (key, field) = ("mykey", "myfield")
-        let expectation = self.expectation(description: "RedisClient")
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashIncrementBy(key: key, field: field, by: 1) {
-                    response in
-                    guard case .integer(let result) = response , result == 1 else {
-                        XCTFail("Unexpected response \(response)")
-                        expectation.fulfill()
-                        return
-                    }
-                    client.hashIncrementBy(key: key, field: field, by: -1) {
-                        response in
-                        guard case .integer(let result) = response , result == 0 else {
-                            XCTFail("Unexpected response \(response)")
-                            expectation.fulfill()
-                            return
-                        }
-
-                        client.hashIncrementBy(key: key, field: field, by: 1.5) {
-                            response in
-                            defer {
-                                RedisClient.releaseClient(client)
-                                expectation.fulfill()
-                            }
-
-                            guard case .bulkString = response else {
-                                XCTFail("Unexpected response \(response)")
-                                expectation.fulfill()
-                                return
-                            }
-
-                            let result = Double(response.string!)!
-							XCTAssertEqual(1.5, result, accuracy: 0.1, "Unexpected response \(response)")
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        let r1 = try await client.hashIncrementBy(key: key, field: field, by: 1)
+        #expect(r1.integer == 1)
+        let r2 = try await client.hashIncrementBy(key: key, field: field, by: -1)
+        #expect(r2.integer == 0)
+        let r3 = try await client.hashIncrementBy(key: key, field: field, by: 1.5)
+        guard case .bulkString = r3 else {
+            Issue.record("Expected bulkString for HINCRBYFLOAT, got \(r3)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
-        }
+        let resultDouble = Double(r3.string ?? "0") ?? 0
+        #expect(abs(resultDouble - 1.5) < 0.001)
     }
 
-    func testHashScan() {
+    @Test func hashScan() async throws {
+        guard ProcessInfo.processInfo.environment["REDIS_TESTS"] == "1" else { return }
+        let client = try await RedisClient.connect()
+        _ = try await client.flushAll()
+        defer { Task { try? await client.close() } }
         let key = "mykey"
-        let hashFieldsValues: [(String, RedisClient.RedisValue)] = [
-            ("myfield", .string("myvalue")),
-            ("myfield2", .string("myvalue2"))
-        ]
-        let expectation = self.expectation(description: "RedisClient")
-        let expectedDict = ["myfield": "myvalue", "myfield2": "myvalue2"]
-        RedisClient.getClient(withIdentifier: clientIdentifier()) {
-            c in
-            do {
-                let client = try c()
-                client.hashSet(key: key, fieldsValues: hashFieldsValues) {
-                    response in
-                    client.hashScan(key: key, cursor: 0) {
-                        response in
-                        defer {
-                            RedisClient.releaseClient(client)
-                            expectation.fulfill()
-                        }
-                        switch response {
-                            case .array(let a):
-                                XCTAssertEqual("0", a[0].string)
-                                var resultDict: [String: String] = [:]
-                                switch a[1] {
-                                    case .array(var ar):
-                                        while ar.count > 0 {
-                                            let value: String = ar.popLast()!.string!
-                                            let key: String = ar.popLast()!.string!
-                                            resultDict[key] = value
-                                        }
-                                        XCTAssertEqual(expectedDict, resultDict, "Unexpected dictionary returned \(resultDict)")
-                                    default:
-                                        XCTFail("Was expecting an array of strings as the second element of the response")
-                                }
-                            default:
-                                XCTFail("Unexpected response \(response)")
-                        }
-                    }
-                }
-            } catch {
-                XCTFail("Could not connect to server \(error)")
-                expectation.fulfill()
-                return
-            }
+        let fv: [(String, RedisClient.RedisValue)] = [("myfield", .string("myvalue")), ("myfield2", .string("myvalue2"))]
+        _ = try await client.hashSet(key: key, fieldsValues: fv)
+        let r = try await client.hashScan(key: key, cursor: 0)
+        guard case .array(let a) = r, a.count == 2 else {
+            Issue.record("Expected array[2] from HSCAN, got \(r)"); return
         }
-        self.waitForExpectations(timeout: 60.0) {
-            _ in
+        #expect(a[0].string == "0")
+        guard case .array(var pairs) = a[1] else {
+            Issue.record("Expected inner array, got \(a[1])"); return
         }
-    }
-
-    static var allTests : [(String, (HashTests) -> () throws -> Void)] {
-        return [
-            ("testHashSetHashGet", testHashSetHashGet),
-            ("testHashDelAndHashExist", testHashDelAndHashExist),
-            ("testHashMultiSetAndHashGetAll", testHashMultiSetAndHashGetAll),
-            ("testHashMultiGet", testHashMultiGet),
-            ("testHashKeysValuesLen", testHashKeysValuesLen),
-            ("testHashSetNX", testHashSetNX),
-            ("testHashStrlen", testHashStrlen),
-            ("testHashIncrementBy", testHashIncrementBy),
-            ("testHashScan", testHashScan)
-        ]
+        var dict: [String: String] = [:]
+        while pairs.count >= 2 {
+            let v = pairs.popLast()!.string!
+            let k = pairs.popLast()!.string!
+            dict[k] = v
+        }
+        #expect(dict == ["myfield": "myvalue", "myfield2": "myvalue2"])
     }
 }
