@@ -1,5 +1,8 @@
 # Perfect-Redis [English](README.md)
 
+> **注意 / Note:** 本文档描述的是 3.x 版本的回调式 API，现保存在 [`legacy`](https://github.com/PerfectlySoft/Perfect-Redis/tree/legacy) 分支。4.0.0 的 async/await API 请参阅 [English README](README.md)。
+> This translation describes the 3.x callback API, preserved on the `legacy` branch. For 4.0.0, see the [English README](README.md).
+
 <p align="center">
     <a href="http://perfect.org/get-involved.html" target="_blank">
         <img src="http://perfect.org/assets/github/perfect_github_2_0_0.jpg" alt="Get Involed with Perfect!" width="854" />
