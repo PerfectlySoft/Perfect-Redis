@@ -177,6 +177,51 @@ extension LiveRedisTests {
             try await publisher.close()
         }
 
+        /// RediStack 1.6.3 drops the server's reply when an unsubscribe names nothing it is
+        /// tracking, so these used to wait forever and leave the client refusing commands.
+        @Test(arguments: [
+            "channels-all with only patterns", "patterns-all with only channels",
+            "unknown channel", "duplicate channel", "same channel twice", "nothing subscribed",
+        ])
+        func unsubscribeFromNothingReturns(_ scenario: String) async throws {
+            let client = try await RedisTestEnvironment.connect()
+            let finished = await bounded(4, scenario) {
+                switch scenario {
+                case "channels-all with only patterns":
+                    try await client.subscribe(patterns: ["p*"])
+                    try await client.unsubscribe(channels: [])
+                    try await client.unsubscribe(patterns: [])
+                case "patterns-all with only channels":
+                    try await client.subscribe(channels: ["c"])
+                    try await client.unsubscribe(patterns: [])
+                    try await client.unsubscribe(channels: [])
+                case "unknown channel":
+                    try await client.subscribe(channels: ["a", "b"])
+                    try await client.unsubscribe(channels: ["zzz"])
+                    try await client.unsubscribe(channels: ["a", "b"])
+                case "duplicate channel":
+                    try await client.subscribe(channels: ["a", "a", "b"])
+                    try await client.unsubscribe(channels: ["a", "a"])
+                    try await client.unsubscribe(channels: ["b"])
+                case "same channel twice":
+                    try await client.subscribe(channels: ["a", "b"])
+                    try await client.unsubscribe(channels: ["a"])
+                    try await client.unsubscribe(channels: ["a"])
+                    try await client.unsubscribe(channels: ["b"])
+                default:
+                    try await client.unsubscribe(channels: [])
+                    try await client.unsubscribe(patterns: ["p*"])
+                }
+                return try await client.ping()
+            }
+            if case .success(let pong)? = finished {
+                #expect(pong.string == "PONG", "Fully unsubscribed, so PING should work normally")
+            } else if case .failure(let error)? = finished {
+                Issue.record("\(scenario): \(error)")
+            }
+            try? await client.close()
+        }
+
         @Test func emptySubscriptionListIsRejected() async throws {
             let client = try await RedisTestEnvironment.connect()
             await #expect(throws: RedisClient.CommandError.self) { try await client.subscribe(channels: []) }

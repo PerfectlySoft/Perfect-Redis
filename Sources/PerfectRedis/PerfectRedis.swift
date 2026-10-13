@@ -382,7 +382,9 @@ public actor RedisClient {
     /// client counts as subscribing, so no ordinary command goes out meanwhile, and a
     /// subscribe first waits for commands already in flight, so none of their replies pass
     /// through RediStack's pub/sub handler.
-    func changeSubscriptions(entering: Bool, _ change: () -> EventLoopFuture<Void>) async throws {
+    func changeSubscriptions(
+        entering: Bool, _ change: () -> EventLoopFuture<Void>?, then record: () -> Void
+    ) async throws {
         if entering, let current = currentTransaction, current == transactionOwner {
             throw CommandError("subscribe can't be used inside multi(body:)")
         }
@@ -407,7 +409,35 @@ public actor RedisClient {
             try await waitUntil("commands in flight to finish before subscribing") { inFlight == 0 }
         }
         try Task.checkCancellation()
-        try await awaitReply(change())
+        if !connection.isConnected {
+            subscribedChannels.removeAll()
+            subscribedPatterns.removeAll()
+        }
+        guard let future = change() else { return }
+        try await awaitReply(future)
+        // Before the next change takes its turn.
+        record()
+    }
+
+    /// What this client is subscribed to, so unsubscribe sends only names RediStack tracks:
+    /// RediStack 1.6.3 drops the server's reply to anything else, and the call never returns.
+    private var subscribedChannels: Set<String> = []
+    private var subscribedPatterns: Set<String> = []
+
+    func recordSubscription(channels: Set<String> = [], patterns: Set<String> = []) {
+        subscribedChannels.formUnion(channels)
+        subscribedPatterns.formUnion(patterns)
+    }
+
+    func recordUnsubscription(channels: Set<String> = [], patterns: Set<String> = []) {
+        subscribedChannels.subtract(channels)
+        subscribedPatterns.subtract(patterns)
+    }
+
+    /// The tracked names to unsubscribe from: all of that kind for an empty list, otherwise
+    /// the requested names that are actually subscribed, without duplicates.
+    func unsubscribeTargets(_ requested: [String], from subscribed: Set<String>) -> Set<String> {
+        requested.isEmpty ? subscribed : subscribed.intersection(requested)
     }
 
     /// Awaits a reply, honouring commandTimeout and task cancellation. Either one closes the
@@ -886,15 +916,18 @@ public extension RedisClient {
     func subscribe(patterns: [String]) async throws {
         guard !patterns.isEmpty else { throw CommandError("subscribe(patterns:) needs at least one pattern") }
         let sink = messageSink
+        let unique = Set(patterns)
         try await changeSubscriptions(entering: true) {
             connection.psubscribe(
-                to: patterns,
+                to: Array(unique),
                 messageReceiver: { channel, value in
                     sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
                 },
                 onSubscribe: nil,
                 onUnsubscribe: nil
             )
+        } then: {
+            recordSubscription(patterns: unique)
         }
     }
 
@@ -906,29 +939,45 @@ public extension RedisClient {
     func subscribe(channels: [String]) async throws {
         guard !channels.isEmpty else { throw CommandError("subscribe(channels:) needs at least one channel") }
         let sink = messageSink
+        let unique = Set(channels)
         try await changeSubscriptions(entering: true) {
             connection.subscribe(
-                to: channels.map { RedisChannelName($0) },
+                to: unique.map { RedisChannelName($0) },
                 messageReceiver: { channel, value in
                     sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
                 },
                 onSubscribe: nil,
                 onUnsubscribe: nil
             )
+        } then: {
+            recordSubscription(channels: unique)
         }
     }
 
     /// Unsubscribes from the given patterns, or from every pattern when the list is empty.
+    /// Patterns this client isn't subscribed to are ignored.
     func unsubscribe(patterns: [String]) async throws {
-        try await changeSubscriptions(entering: false) { connection.punsubscribe(from: patterns) }
+        var targets: Set<String> = []
+        try await changeSubscriptions(entering: false) {
+            targets = unsubscribeTargets(patterns, from: subscribedPatterns)
+            return targets.isEmpty ? nil : connection.punsubscribe(from: Array(targets))
+        } then: {
+            recordUnsubscription(patterns: targets)
+        }
     }
 
     /// Unsubscribes from the given channels, or from every channel when the list is empty.
+    /// Channels this client isn't subscribed to are ignored.
     func unsubscribe(channels: [String]) async throws {
+        var targets: Set<String> = []
         try await changeSubscriptions(entering: false) {
-            connection.unsubscribe(from: channels.map { RedisChannelName($0) })
+            targets = unsubscribeTargets(channels, from: subscribedChannels)
+            return targets.isEmpty ? nil : connection.unsubscribe(from: targets.map { RedisChannelName($0) })
+        } then: {
+            recordUnsubscription(channels: targets)
         }
     }
+
     func publish(channel: String, message: RedisValue) async throws -> RedisResponse {
         try await send("PUBLISH", [arg(channel), message.resp])
     }
