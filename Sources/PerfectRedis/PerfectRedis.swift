@@ -194,7 +194,7 @@ public actor RedisClient {
     private let commandTimeout: TimeAmount?
 
     /// Messages published to the channels and patterns this client subscribes to, in arrival
-    /// order. The stream is unbounded and ends when the client is closed or deinitialised.
+    /// order. The stream is unbounded and ends when the connection closes for any reason.
     /// It is shared by every subscription on this client, so iterate it from one task.
     public nonisolated let messages: AsyncStream<PublishedMessage>
     private nonisolated let messageSink: AsyncStream<PublishedMessage>.Continuation
@@ -249,7 +249,11 @@ public actor RedisClient {
         self.connection = connection
         self.channel = channel
         self.commandTimeout = commandTimeout
-        (messages, messageSink) = AsyncStream.makeStream(of: PublishedMessage.self)
+        let (stream, sink) = AsyncStream.makeStream(of: PublishedMessage.self)
+        (messages, messageSink) = (stream, sink)
+        // However the connection ends (close(), a timeout, the server dropping it), so does
+        // the stream.
+        channel.closeFuture.whenComplete { _ in sink.finish() }
     }
 
     deinit {

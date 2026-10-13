@@ -98,4 +98,25 @@ import Testing
         await #expect(throws: (any Error).self) { try await pending.value }
         await server.shutdown()
     }
+
+    /// The stream used to end only on close() or deinit, so iterating it hung forever after
+    /// the server dropped the connection or a timeout closed it.
+    @Test(arguments: [false, true])
+    func messagesEndWhenTheConnectionDrops(byTimeout: Bool) async throws {
+        let server = try await FakeRedisServer([byTimeout ? .silence : .close])
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: byTimeout ? 0.3 : nil)
+        let client = try await RedisClient.connect(withIdentifier: id)
+        let drained = Task { for await _ in client.messages {}; return true }
+        await #expect(throws: (any Error).self) { try await client.ping() }
+        let watchdog = Task {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            drained.cancel()
+        }
+        let finished = await drained.value
+        watchdog.cancel()
+        #expect(finished)
+        // drained.cancel() also ends the loop, so check it ended without the watchdog.
+        #expect(!drained.isCancelled, "messages did not finish when the connection dropped")
+        await server.shutdown()
+    }
 }
