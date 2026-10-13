@@ -282,8 +282,7 @@ public actor RedisClient {
         }
         inFlight += 1
         defer { commandFinished() }
-        let result = try await reply(to: connection.send(command: command, with: args))
-        return RedisResponse(result)
+        return try await awaitReply(connection.send(command: command, with: args).map { RedisResponse($0) })
     }
 
     // MARK: Subscription mode
@@ -331,41 +330,34 @@ public actor RedisClient {
             // Leave subscription mode once RediStack has no subscriptions left.
             subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
         }
-        try await change().get()
+        try await awaitReply(change())
     }
-
-    private enum Interruption { case timedOut, cancelled }
 
     /// Awaits a reply, honouring commandTimeout and task cancellation. Either one closes the
     /// connection: the command has been sent, so abandoning only its reply would leave the
-    /// server's next reply to be paired with whatever is sent next.
-    func reply(to future: EventLoopFuture<RESPValue>) async throws -> RESPValue {
+    /// server's next reply to be paired with whatever is sent next. The wait ends on the
+    /// timeout or cancellation itself rather than on the future failing, because RediStack
+    /// doesn't fail every future (pending subscription changes) when its channel closes.
+    func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>) async throws -> Value {
+        let waiter = ReplyWaiter<Value>()
         let channel = self.channel
-        let interruption = NIOLockedValueBox<Interruption?>(nil)
-        if let commandTimeout {
-            let timer = future.eventLoop.scheduleTask(in: commandTimeout) {
-                interruption.withLockedValue { $0 = $0 ?? .timedOut }
-                channel.close(promise: nil)
+        let timeout = commandTimeout
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard waiter.install(continuation) else { return }
+                future.whenComplete { waiter.finish($0) }
+                if let timeout {
+                    let timer = future.eventLoop.scheduleTask(in: timeout) {
+                        let ms = timeout.nanoseconds / 1_000_000
+                        waiter.finish(.failure(CommandError("No reply within \(ms) ms; the connection was closed")))
+                        channel.close(promise: nil)
+                    }
+                    future.whenComplete { _ in timer.cancel() }
+                }
             }
-            future.whenComplete { _ in timer.cancel() }
-        }
-        do {
-            return try await withTaskCancellationHandler {
-                try await future.get()
-            } onCancel: {
-                interruption.withLockedValue { $0 = $0 ?? .cancelled }
-                channel.close(promise: nil)
-            }
-        } catch {
-            switch interruption.withLockedValue({ $0 }) {
-            case .timedOut?:
-                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
-                throw CommandError("No reply within \(ms) ms; the connection was closed")
-            case .cancelled?:
-                throw CancellationError()
-            case nil:
-                throw error
-            }
+        } onCancel: {
+            waiter.finish(.failure(CancellationError()))
+            channel.close(promise: nil)
         }
     }
 
@@ -929,5 +921,49 @@ public extension RedisClient {
         if let p = pattern { args += [arg("MATCH"), arg(p)] }
         if let c = count   { args += [arg("COUNT"), arg(String(c))] }
         return try await send("HSCAN", args)
+    }
+}
+
+/// Resumes a continuation exactly once, with whichever of a reply, a timeout or a
+/// cancellation comes first. A result that arrives before the continuation is installed
+/// is kept and delivered when it is.
+final class ReplyWaiter<Value: Sendable>: Sendable {
+    private enum State {
+        case idle
+        case waiting(CheckedContinuation<Value, Error>)
+        case finishedEarly(Result<Value, Error>)
+        case done
+    }
+    private let state = NIOLockedValueBox(State.idle)
+
+    /// Returns false if the waiter already finished; the continuation has then been resumed.
+    func install(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
+        let early: Result<Value, Error>? = state.withLockedValue { state in
+            if case .finishedEarly(let result) = state {
+                state = .done
+                return result
+            }
+            state = .waiting(continuation)
+            return nil
+        }
+        guard let early else { return true }
+        continuation.resume(with: early)
+        return false
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        let continuation: CheckedContinuation<Value, Error>? = state.withLockedValue { state in
+            switch state {
+            case .idle:
+                state = .finishedEarly(result)
+                return nil
+            case .waiting(let continuation):
+                state = .done
+                return continuation
+            case .finishedEarly, .done:
+                return nil
+            }
+        }
+        continuation?.resume(with: result)
     }
 }

@@ -119,4 +119,29 @@ import Testing
         #expect(!drained.isCancelled, "messages did not finish when the connection dropped")
         await server.shutdown()
     }
+
+    @Test func subscribeHonoursTheTimeout() async throws {
+        let server = try await FakeRedisServer([.silence])
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 0.3)
+        let client = try await RedisClient.connect(withIdentifier: id)
+        let seconds = await elapsed {
+            await #expect(throws: RedisClient.CommandError.self) { try await client.subscribe(channels: ["c"]) }
+        }
+        #expect(seconds < 5)
+        await server.shutdown()
+    }
+
+    @Test func subscribeHonoursCancellation() async throws {
+        let server = try await FakeRedisServer([.silence])
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let waiting = Task { try await client.subscribe(patterns: ["p*"]) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let seconds = await elapsed {
+            waiting.cancel()
+            let result = await waiting.result
+            #expect(throws: CancellationError.self) { try result.get() }
+        }
+        #expect(seconds < 5)
+        await server.shutdown()
+    }
 }
