@@ -171,4 +171,19 @@ import Testing
         try await client.close()
         await server.shutdown()
     }
+
+    /// A client released without close() left its socket open.
+    @Test func releasingAClientClosesItsConnection() async throws {
+        let server = try await FakeRedisServer(replies: "+PONG\r\n")
+        var client: RedisClient? = try await RedisClient.connect(withIdentifier: server.identifier)
+        _ = try await client?.ping()
+        client = nil
+        var waited = 0
+        while server.closedConnections == 0, waited < 50 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            waited += 1
+        }
+        #expect(server.closedConnections == 1, "The released client's connection was left open")
+        await server.shutdown()
+    }
 }

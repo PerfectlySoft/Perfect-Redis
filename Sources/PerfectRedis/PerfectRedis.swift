@@ -277,8 +277,11 @@ public actor RedisClient {
         channel.closeFuture.whenComplete { _ in sink.finish() }
     }
 
+    /// A client released without close() closes its connection outright; replies still
+    /// outstanding are lost. Prefer close(), which gives them a moment to arrive.
     deinit {
         messageSink.finish()
+        channel.close(promise: nil)
     }
 
     /// Closes the connection. Replies still outstanding get up to a second to arrive (a
