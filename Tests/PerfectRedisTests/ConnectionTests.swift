@@ -282,4 +282,20 @@ import Testing
         #expect(server.closedConnections == 1, "The released client stayed connected")
         await server.shutdown()
     }
+
+    /// unsubscribe on a closed connection reported success, while subscribe threw.
+    @Test func subscriptionChangesOnAClosedConnectionThrow() async throws {
+        let server = try await FakeRedisServer([.close])
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        _ = try? await client.ping()
+        let unsubscribe = await bounded(5, "unsubscribe on a closed connection") {
+            try await client.unsubscribe(channels: [])
+        }
+        if case .success? = unsubscribe { Issue.record("unsubscribe reported success on a closed connection") }
+        let punsubscribe = await bounded(5, "unsubscribe(patterns:) on a closed connection") {
+            try await client.unsubscribe(patterns: ["p*"])
+        }
+        if case .success? = punsubscribe { Issue.record("unsubscribe reported success on a closed connection") }
+        await server.shutdown()
+    }
 }

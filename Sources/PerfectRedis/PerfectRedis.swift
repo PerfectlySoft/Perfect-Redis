@@ -469,8 +469,10 @@ public actor RedisClient {
         try Task.checkCancellation()
         try checkDeadline(deadline, waitingFor: "its turn")
         if !connection.isConnected {
+            // Nothing is subscribed on a closed connection; say so the way subscribe does.
             subscribedChannels.removeAll()
             subscribedPatterns.removeAll()
+            throw RedisClientError.connectionClosed
         }
         guard let future = change() else { return }
         try await awaitReply(future, deadline: deadline)
