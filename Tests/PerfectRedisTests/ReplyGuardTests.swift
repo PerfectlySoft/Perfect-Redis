@@ -31,10 +31,6 @@ import Testing
         try await expectRejected("$9223372036854775807\r\n")
     }
 
-    @Test func bulkLengthBeyondLimit() async throws {
-        try await expectRejected("$\(RESPReplyGuard.maxBulkLength + 1)\r\n")
-    }
-
     @Test func negativeBulkLength() async throws {
         try await expectRejected("$-2\r\n")
     }
@@ -97,6 +93,36 @@ import Testing
             try channel.writeInbound(channel.allocator.buffer(string: "+OK"))
             try channel.writeInbound(channel.allocator.buffer(string: "\n"))
         }
+        _ = try? channel.finish()
+    }
+
+    /// RediStack reserves an array's capacity from its declared count before any element
+    /// arrives: 24 bytes each, so 2^32 - 1 asked Linux for ~100 GB and aborted the process.
+    @Test(arguments: [4_294_967_295, 200_000_000, RESPReplyGuard.maxPendingElements + 1])
+    func arrayCountTooLargeToReserve(_ count: Int) async throws {
+        try await expectRejected("*\(count)\r\n:1\r\n")
+    }
+
+    @Test func bulkLengthBeyondRedisMaximum() async throws {
+        try await expectRejected("$\(512 * 1024 * 1024 + 1)\r\n")
+    }
+
+    /// Nested arrays each reserve their own count, so the limit is on the total still to come.
+    @Test func pendingElementsAreCountedAcrossNestedArrays() throws {
+        let half = RESPReplyGuard.maxPendingElements / 2
+        let channel = EmbeddedChannel(handler: RESPReplyGuard())
+        try channel.writeInbound(channel.allocator.buffer(string: "*\(half)\r\n"))
+        // All half of the outer elements are still pending while this one is open.
+        #expect(throws: RedisClient.CommandError.self) {
+            try channel.writeInbound(channel.allocator.buffer(string: "*\(half + 2)\r\n"))
+        }
+        _ = try? channel.finish()
+    }
+
+    @Test func countsAtTheLimitPassThrough() throws {
+        let channel = EmbeddedChannel(handler: RESPReplyGuard())
+        try channel.writeInbound(channel.allocator.buffer(string: "*\(RESPReplyGuard.maxPendingElements)\r\n"))
+        try channel.writeInbound(channel.allocator.buffer(string: "$\(RESPReplyGuard.maxBulkLength)\r\n"))
         _ = try? channel.finish()
     }
 

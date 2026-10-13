@@ -11,17 +11,18 @@ import NIOCore
 /// RediStack then fails every pending command and closes the connection.
 ///
 /// It only checks framing: lengths, counts, nesting depth, CRLF line ends and type bytes.
-/// Contents are left
-/// to RediStack's parser.
+/// Contents are left to RediStack's parser.
 final class RESPReplyGuard: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     typealias InboundOut = ByteBuffer
 
-    /// Redis caps a string at 512 MB by default (proto-max-bulk-len); this leaves room for a
-    /// raised setting while keeping RediStack's arithmetic far from overflow.
-    static let maxBulkLength = Int(UInt32.max)
-    /// Redis's own aggregates hold at most 2^32 - 1 elements.
-    static let maxArrayCount = Int(UInt32.max)
+    /// Redis's largest string (proto-max-bulk-len's default and the size of a string value).
+    static let maxBulkLength = 512 * 1024 * 1024
+    /// RediStack reserves capacity for an array's declared count before any element arrives
+    /// (24 bytes each) and again on every read until the reply is complete. This caps the
+    /// elements declared but not yet received across all open arrays, about 400 MB of
+    /// reservation, so a hostile count can't exhaust memory or abort the process.
+    static let maxPendingElements = 1 << 24
     /// Real replies nest a handful of levels deep.
     static let maxDepth = 64
     /// A length or count header is at most 20 digits, a sign and CR.
@@ -44,6 +45,8 @@ final class RESPReplyGuard: ChannelInboundHandler {
     private var state = State.type
     /// Elements still to come in each open array, innermost last.
     private var openArrays: [Int] = []
+    /// The sum of `openArrays`.
+    private var pendingElements = 0
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         if case .failed = state { return }
@@ -141,11 +144,15 @@ final class RESPReplyGuard: ChannelInboundHandler {
             switch value {
             case -1, 0:
                 completeValue()
-            case 1...Self.maxArrayCount:
+            case 1...Self.maxPendingElements:
                 guard openArrays.count < Self.maxDepth else {
                     throw violation("arrays nested more than \(Self.maxDepth) deep")
                 }
+                guard pendingElements + value <= Self.maxPendingElements else {
+                    throw violation("more than \(Self.maxPendingElements) array elements outstanding")
+                }
                 openArrays.append(value)
+                pendingElements += value
                 state = .type
             default:
                 throw violation("array count \(value)")
@@ -158,6 +165,7 @@ final class RESPReplyGuard: ChannelInboundHandler {
         state = .type
         while let last = openArrays.indices.last {
             openArrays[last] -= 1
+            pendingElements -= 1
             guard openArrays[last] == 0 else { return }
             openArrays.removeLast()
         }
