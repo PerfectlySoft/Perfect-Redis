@@ -85,4 +85,17 @@ import Testing
         #expect(server.closedConnections == 1, "The rejected connection was left open")
         await server.shutdown()
     }
+
+    /// RediStack's graceful close waits for every outstanding reply, so a pending BLPOP 0 or
+    /// a silent server made close() hang forever.
+    @Test func closeDoesNotWaitForeverForOutstandingReplies() async throws {
+        let server = try await FakeRedisServer([.silence])
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let pending = Task { try await client.ping() }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let seconds = try await elapsed { try await client.close() }
+        #expect(seconds < 5)
+        await #expect(throws: (any Error).self) { try await pending.value }
+        await server.shutdown()
+    }
 }

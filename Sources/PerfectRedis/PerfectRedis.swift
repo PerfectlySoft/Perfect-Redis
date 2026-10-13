@@ -256,9 +256,16 @@ public actor RedisClient {
         messageSink.finish()
     }
 
+    /// Closes the connection. Replies still outstanding get up to a second to arrive (a
+    /// blocking command or a silent server would otherwise hold close() forever); then the
+    /// connection is closed outright and those commands throw.
     public func close() async throws {
         messageSink.finish()
-        _ = try await connection.close().get()
+        let channel = self.channel
+        connection.close()
+        let deadline = channel.eventLoop.scheduleTask(in: .seconds(1)) { channel.close(promise: nil) }
+        defer { deadline.cancel() }
+        try await channel.closeFuture.get()
     }
 
     // All public commands route through here.
