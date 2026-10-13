@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import NIOPosix
+import NIOConcurrencyHelpers
 @testable import PerfectRedis
 
 /// A one-connection TCP server on 127.0.0.1 that answers each read with the next scripted
@@ -13,13 +14,19 @@ final class FakeRedisServer: Sendable {
         case silence
         /// Close the connection.
         case close
+        /// Write these bytes, then close the connection.
+        case replyThenClose([UInt8])
     }
 
     private let channel: Channel
+    private let script: Script
     var port: Int { channel.localAddress?.port ?? 0 }
+    /// How many client connections have closed so far.
+    var closedConnections: Int { script.closed.withLockedValue { $0 } }
 
     init(_ steps: [Step]) async throws {
         let script = Script(steps)
+        self.script = script
         channel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
@@ -46,6 +53,7 @@ final class FakeRedisServer: Sendable {
     private final class Script: @unchecked Sendable {
         // Only touched on the child channel's event loop.
         var steps: [Step]
+        let closed = NIOLockedValueBox(0)
         init(_ steps: [Step]) { self.steps = steps }
     }
 
@@ -63,7 +71,15 @@ final class FakeRedisServer: Sendable {
                 break
             case .close:
                 context.close(promise: nil)
+            case .replyThenClose(let bytes):
+                context.writeAndFlush(NIOAny(context.channel.allocator.buffer(bytes: bytes)), promise: nil)
+                context.close(promise: nil)
             }
+        }
+
+        func channelInactive(context: ChannelHandlerContext) {
+            script.closed.withLockedValue { $0 += 1 }
+            context.fireChannelInactive()
         }
     }
 }

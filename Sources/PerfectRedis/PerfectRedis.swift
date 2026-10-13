@@ -5,6 +5,7 @@ import Foundation
 @preconcurrency import RediStack
 import NIOCore
 import NIOPosix
+import NIOConcurrencyHelpers
 
 public let redisDefaultPort = 6379
 
@@ -98,17 +99,23 @@ public struct RedisClientIdentifier: Sendable {
     public let host: String
     public let port: Int
     public let password: String
+    /// Seconds to wait for each command's reply before closing the connection and throwing
+    /// `CommandError`, or nil (the default) to wait indefinitely. It also bounds blocking
+    /// commands such as BLPOP, so give those a server-side timeout shorter than this.
+    public let commandTimeout: Double?
 
     public init() {
         host = "127.0.0.1"
         port = redisDefaultPort
         password = ""
+        commandTimeout = nil
     }
 
-    public init(withHost host: String, port: Int, password: String = "") {
+    public init(withHost host: String, port: Int, password: String = "", commandTimeout: Double? = nil) {
         self.host = host
         self.port = port
         self.password = password
+        self.commandTimeout = commandTimeout
     }
 }
 
@@ -161,6 +168,10 @@ public actor RedisClient {
     }
 
     private let connection: RedisConnection
+    /// The connection's channel, for closing it outright: RediStack's own close() waits for
+    /// outstanding replies, which never come from a server that has stopped answering.
+    private nonisolated let channel: Channel
+    private let commandTimeout: TimeAmount?
 
     /// Messages published to the channels and patterns this client subscribes to, in arrival
     /// order. The stream is unbounded and ends when the client is closed or deinitialised.
@@ -171,30 +182,51 @@ public actor RedisClient {
     public static func connect(
         withIdentifier id: RedisClientIdentifier = RedisClientIdentifier()
     ) async throws -> RedisClient {
+        var commandTimeout: TimeAmount?
+        if let seconds = id.commandTimeout {
+            guard seconds.isFinite, seconds > 0, seconds < 1e9 else {
+                throw CommandError("commandTimeout must be a positive number of seconds, not \(seconds)")
+            }
+            commandTimeout = .nanoseconds(Int64(seconds * 1e9))
+        }
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let address = try SocketAddress.makeAddressResolvingHost(id.host, port: id.port)
         let password: String? = id.password.isEmpty ? nil : id.password
         let config = try RedisConnection.Configuration(address: address, password: password)
+        let opened = NIOLockedValueBox<Channel?>(nil)
         // RediStack's own pipeline, with RESPReplyGuard in front of its reply decoder.
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(.socketOption(.so_reuseaddr), value: 1)
             .channelInitializer { channel in
-                channel.pipeline.addBaseRedisHandlers().flatMapThrowing {
+                opened.withLockedValue { $0 = channel }
+                return channel.pipeline.addBaseRedisHandlers().flatMapThrowing {
                     try channel.pipeline.syncOperations.addHandler(
                         RESPReplyGuard(), name: "PerfectRedis.ReplyGuard", position: .first
                     )
                 }
             }
-        let connection = try await RedisConnection.make(
-            configuration: config,
-            boundEventLoop: eventLoop,
-            configuredTCPClient: bootstrap
-        ).get()
-        return RedisClient(connection: connection)
+        let connection: RedisConnection
+        do {
+            connection = try await RedisConnection.make(
+                configuration: config,
+                boundEventLoop: eventLoop,
+                configuredTCPClient: bootstrap
+            ).get()
+        } catch {
+            // A failed AUTH leaves the socket open; RediStack doesn't close it.
+            try? await opened.withLockedValue { $0 }?.close()
+            throw error
+        }
+        guard let channel = opened.withLockedValue({ $0 }) else {
+            throw CommandError("Connected without a channel")
+        }
+        return RedisClient(connection: connection, channel: channel, commandTimeout: commandTimeout)
     }
 
-    private init(connection: RedisConnection) {
+    private init(connection: RedisConnection, channel: Channel, commandTimeout: TimeAmount?) {
         self.connection = connection
+        self.channel = channel
+        self.commandTimeout = commandTimeout
         (messages, messageSink) = AsyncStream.makeStream(of: PublishedMessage.self)
     }
 
@@ -210,8 +242,43 @@ public actor RedisClient {
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
         await waitForTransaction()
-        let result = try await connection.send(command: command, with: args).get()
+        let result = try await reply(to: connection.send(command: command, with: args))
         return RedisResponse(result)
+    }
+
+    private enum Interruption { case timedOut, cancelled }
+
+    /// Awaits a reply, honouring commandTimeout and task cancellation. Either one closes the
+    /// connection: the command has been sent, so abandoning only its reply would leave the
+    /// server's next reply to be paired with whatever is sent next.
+    func reply(to future: EventLoopFuture<RESPValue>) async throws -> RESPValue {
+        let channel = self.channel
+        let interruption = NIOLockedValueBox<Interruption?>(nil)
+        if let commandTimeout {
+            let timer = future.eventLoop.scheduleTask(in: commandTimeout) {
+                interruption.withLockedValue { $0 = $0 ?? .timedOut }
+                channel.close(promise: nil)
+            }
+            future.whenComplete { _ in timer.cancel() }
+        }
+        do {
+            return try await withTaskCancellationHandler {
+                try await future.get()
+            } onCancel: {
+                interruption.withLockedValue { $0 = $0 ?? .cancelled }
+                channel.close(promise: nil)
+            }
+        } catch {
+            switch interruption.withLockedValue({ $0 }) {
+            case .timedOut?:
+                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
+                throw CommandError("No reply within \(ms) ms; the connection was closed")
+            case .cancelled?:
+                throw CancellationError()
+            case nil:
+                throw error
+            }
+        }
     }
 
     // MARK: Transaction ownership
