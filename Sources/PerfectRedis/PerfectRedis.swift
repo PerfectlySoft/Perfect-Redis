@@ -6,6 +6,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOConcurrencyHelpers
+import Logging
 
 public let redisDefaultPort = 6379
 
@@ -103,19 +104,36 @@ public struct RedisClientIdentifier: Sendable {
     /// `CommandError`, or nil (the default) to wait indefinitely. It also bounds blocking
     /// commands such as BLPOP, so give those a server-side timeout shorter than this.
     public let commandTimeout: Double?
+    /// Where RediStack logs this connection's activity, or nil (the default) for nowhere.
+    ///
+    /// RediStack logs every command with its arguments at `debug` level (including the
+    /// password sent with AUTH, and every value), every reply at `debug`, and every failed
+    /// command at `error`. Pass a logger only where that is acceptable, and keep its level
+    /// above `debug` in production.
+    public let logger: Logger?
 
     public init() {
         host = "127.0.0.1"
         port = redisDefaultPort
         password = ""
         commandTimeout = nil
+        logger = nil
     }
 
-    public init(withHost host: String, port: Int, password: String = "", commandTimeout: Double? = nil) {
+    public init(
+        withHost host: String, port: Int, password: String = "",
+        commandTimeout: Double? = nil, logger: Logger? = nil
+    ) {
         self.host = host
         self.port = port
         self.password = password
         self.commandTimeout = commandTimeout
+        self.logger = logger
+    }
+
+    /// The logger handed to RediStack.
+    var connectionLogger: Logger {
+        logger ?? Logger(label: "PerfectRedis", factory: { _ in SwiftLogNoOpLogHandler() })
     }
 }
 
@@ -194,7 +212,9 @@ public actor RedisClient {
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let address = try SocketAddress.makeAddressResolvingHost(id.host, port: id.port)
         let password: String? = id.password.isEmpty ? nil : id.password
-        let config = try RedisConnection.Configuration(address: address, password: password)
+        let config = try RedisConnection.Configuration(
+            address: address, password: password, defaultLogger: id.connectionLogger
+        )
         let opened = NIOLockedValueBox<Channel?>(nil)
         // RediStack's own pipeline, with RESPReplyGuard in front of its reply decoder.
         let bootstrap = ClientBootstrap(group: eventLoop)

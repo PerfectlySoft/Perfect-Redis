@@ -12,6 +12,8 @@ let package = Package(
         // Already a RediStack dependency; the library imports NIOCore and NIOPosix
         // directly, and the tests run a scripted fake server on it.
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+        // Also already RediStack's; the client gives RediStack a silent logger by default.
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.3"),
     ],
     targets: [
         .target(
@@ -21,6 +23,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+                .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -32,6 +35,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+                .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
