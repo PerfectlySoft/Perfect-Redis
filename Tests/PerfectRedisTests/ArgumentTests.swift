@@ -64,4 +64,12 @@ import Testing
         try? await client.close()
         await server.shutdown()
     }
+
+    @Test func byteArraysAreBinaryValues() {
+        guard case .binary(let bytes) = [UInt8]([0, 13, 10, 255]).redisValue else {
+            Issue.record("Expected .binary"); return
+        }
+        #expect(bytes == [0, 13, 10, 255])
+        #expect("text".redisValue.string == "text")
+    }
 }

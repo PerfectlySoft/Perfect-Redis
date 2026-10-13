@@ -129,11 +129,13 @@ extension String: RedisValueRepresentable {
     public var redisValue: RedisClient.RedisValue { .string(self) }
 }
 
+/// Kept for source compatibility. Only `[UInt8]` is `RedisValueRepresentable`; conforming
+/// another type to `ROctal` no longer makes its arrays representable.
 public protocol ROctal: Sendable {}
 extension UInt8: ROctal {}
 
-extension Array: RedisValueRepresentable where Element: ROctal {
-    public var redisValue: RedisClient.RedisValue { .binary(self as! [UInt8]) }
+extension Array: RedisValueRepresentable where Element == UInt8 {
+    public var redisValue: RedisClient.RedisValue { .binary(self) }
 }
 
 // MARK: - RedisClient
