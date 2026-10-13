@@ -65,3 +65,6 @@ fastlane/screenshots
 Packages/
 PerfectRedis.xcodeproj/
 .DS_Store
+.swiftpm/
+# A library doesn't pin its dependencies' versions for its consumers.
+Package.resolved
