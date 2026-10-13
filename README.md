@@ -96,7 +96,9 @@ Task {
 _ = try await publisher.publish(channel: "news", message: .string("Hello!"))
 ```
 
-`subscribe` first waits for commands the client has already sent to get their replies. From then until its last subscription ends, the client throws `CommandError` for every other command, so publish and run other commands from a second client. `unsubscribe(channels: [])` and `unsubscribe(patterns: [])` drop every subscription. The stream ends when the connection closes for any reason: `close()`, a timeout, a cancellation, or the server dropping it.
+`subscribe` first waits for commands the client has already sent to get their replies. From then until its last subscription ends, the client throws `CommandError` for every other command, so publish and run other commands from a second client. Subscription changes run one at a time, in the order they're made. `unsubscribe(channels: [])` drops every channel subscription and `unsubscribe(patterns: [])` every pattern one; names the client isn't subscribed to are ignored, so unsubscribing from nothing returns at once. Once both kinds are gone, the client accepts ordinary commands again.
+
+If the server refuses a subscription (for example an ACL `NOPERM`), RediStack drops the error reply, so `subscribe` waits until `commandTimeout` (or until the connection closes). Set a `commandTimeout` if your server restricts channels. The stream ends when the connection closes for any reason: `close()`, a timeout, a cancellation, or the server dropping it.
 
 ### Transactions
 
@@ -107,11 +109,11 @@ let results = try await client.multi {
 }   // .array([.simpleString("OK"), .integer(2)])
 ```
 
-While `multi` runs, commands that other tasks send on the same client wait until `EXEC` or `DISCARD`, so they aren't queued into the transaction. If the body throws, the transaction is discarded and the error rethrown. Commands from the body's child tasks are part of the transaction; a task started outside it (or detached) that the body waits for will deadlock. `multiBegin()`, `multiExec()` and `multiDiscard()` are also available, but called by hand they have no such protection.
+While `multi` runs, commands that other tasks send on the same client wait until `EXEC` or `DISCARD`, so they aren't queued into the transaction. If the body throws, the transaction is discarded and the error rethrown. Commands from the body's child tasks are part of the transaction; a task started outside it (or detached) that the body waits for will deadlock. So will two tasks that take transactions on two clients in opposite orders (`c.multi { d… }` while another runs `d.multi { c… }`). If the task is cancelled while the body runs, the client closes its connection rather than leave a `MULTI` open. `multiBegin()`, `multiExec()` and `multiDiscard()` are also available, but called by hand they have no such protection.
 
 ### Timeouts, cancellation and blocking commands
 
-With `commandTimeout` set, a command (or `subscribe`/`unsubscribe`) that gets no reply in time throws `CommandError` and the connection is closed. It also bounds `connect`, including `AUTH`. The default is no timeout. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
+With `commandTimeout` set, a command (or `subscribe`/`unsubscribe`) that gets no reply in time throws `CommandError` and the connection is closed. It also bounds `connect` from the TCP connection on, including `AUTH` (but not the host name lookup), and a command's wait for another task's transaction or a subscribe's wait for commands in flight; those waits throw without closing the connection, since nothing was sent. The default is no timeout. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled, or cancelled while waiting its turn, throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
 
 `close()` gives outstanding replies up to a second, then closes the connection outright. Releasing a client without `close()` closes it immediately.
 
@@ -123,6 +125,8 @@ Commands share one connection and are pipelined in order, so a blocking command 
 - **No TLS.** The connection is plain TCP. Use a TLS proxy or tunnel to reach a TLS-only server.
 - **Password only.** `AUTH` is sent with the password alone, so it authenticates as the `default` ACL user; there is no username option.
 - **No reconnection or pooling.** Each `RedisClient` is one connection.
+- **Replies of more than 2²⁴ elements are refused.** To keep a hostile server from making RediStack reserve unbounded memory, a reply with more than 16,777,216 array elements outstanding (an `LRANGE`, `KEYS`, `SMEMBERS` or `HGETALL` of a bigger collection) fails with `CommandError` and closes the connection. Page through large collections with `SCAN`-style commands or ranges.
+- **Host name lookup isn't bounded.** `connect` resolves the host with a blocking system call before `commandTimeout` starts; a hung DNS server holds `connect` until the system gives up.
 - **RediStack is deprecated upstream**: its maintainers point new users to valkey-swift. RediStack 1.6 still builds and works on Swift 6.2 and 6.4, and this release stays on it.
 
 ## Logging

@@ -102,7 +102,10 @@ public struct RedisClientIdentifier: Sendable {
     public let password: String
     /// Seconds to wait for each command's reply before closing the connection and throwing
     /// `CommandError`, or nil (the default) to wait indefinitely. It also bounds blocking
-    /// commands such as BLPOP, so give those a server-side timeout shorter than this.
+    /// commands such as BLPOP, so give those a server-side timeout shorter than this;
+    /// subscription changes; connecting (not the host name lookup) and AUTH; and waits for
+    /// another task's transaction or for commands in flight before a subscribe, which throw
+    /// without closing the connection.
     public let commandTimeout: Double?
     /// Where RediStack logs this connection's activity, or nil (the default) for nowhere.
     ///
