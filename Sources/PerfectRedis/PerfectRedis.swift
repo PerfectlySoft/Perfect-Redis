@@ -209,8 +209,43 @@ public actor RedisClient {
 
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
+        await waitForTransaction()
         let result = try await connection.send(command: command, with: args).get()
         return RedisResponse(result)
+    }
+
+    // MARK: Transaction ownership
+
+    /// The `multi(body:)` call the current task is running inside, if any. Child tasks
+    /// inherit it, so structured concurrency inside the body still reaches the server.
+    @TaskLocal static var currentTransaction: UUID?
+    /// The transaction whose MULTI is open on the connection.
+    private var transactionOwner: UUID?
+    private var transactionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Suspends while a `multi(body:)` call that the current task isn't part of is open, so
+    /// other callers' commands don't get queued into it.
+    func waitForTransaction() async {
+        while let owner = transactionOwner, owner != Self.currentTransaction {
+            await withCheckedContinuation { transactionWaiters.append($0) }
+        }
+    }
+
+    func beginTransaction() async throws -> UUID {
+        if let current = Self.currentTransaction, current == transactionOwner {
+            throw CommandError("multi(body:) calls cannot be nested")
+        }
+        await waitForTransaction()
+        let id = UUID()
+        transactionOwner = id
+        return id
+    }
+
+    func endTransaction() {
+        transactionOwner = nil
+        let waiters = transactionWaiters
+        transactionWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 }
 
@@ -543,14 +578,25 @@ public extension RedisClient {
     }
     func multiUnwatch() async throws -> RedisResponse { try await send("UNWATCH") }
 
+    /// Runs `body` inside MULTI…EXEC and returns EXEC's reply, or sends DISCARD and rethrows
+    /// if `body` throws.
+    ///
+    /// Until it returns, commands this client receives from other tasks wait rather than
+    /// being queued into the transaction. Commands from `body` and from child tasks it
+    /// creates go through. Calls nested inside `body` throw `CommandError`. Calling
+    /// `multiBegin()` and `multiExec()` yourself has no such protection.
     func multi(body: () async throws -> ()) async throws -> RedisResponse {
-        _ = try await multiBegin()
-        do {
-            try await body()
-            return try await multiExec()
-        } catch {
-            _ = try await multiDiscard()
-            throw error
+        let id = try await beginTransaction()
+        defer { endTransaction() }
+        return try await Self.$currentTransaction.withValue(id) {
+            _ = try await multiBegin()
+            do {
+                try await body()
+                return try await multiExec()
+            } catch {
+                _ = try? await multiDiscard()
+                throw error
+            }
         }
     }
 }
@@ -572,6 +618,7 @@ public extension RedisClient {
     /// QUIT and RESET on this connection; use another client for everything else.
     func subscribe(patterns: [String]) async throws {
         guard !patterns.isEmpty else { throw CommandError("subscribe(patterns:) needs at least one pattern") }
+        await waitForTransaction()
         let sink = messageSink
         try await connection.psubscribe(
             to: patterns,
@@ -589,6 +636,7 @@ public extension RedisClient {
     /// QUIT and RESET on this connection; use another client for everything else.
     func subscribe(channels: [String]) async throws {
         guard !channels.isEmpty else { throw CommandError("subscribe(channels:) needs at least one channel") }
+        await waitForTransaction()
         let sink = messageSink
         try await connection.subscribe(
             to: channels.map { RedisChannelName($0) },
@@ -602,11 +650,13 @@ public extension RedisClient {
 
     /// Unsubscribes from the given patterns, or from every pattern when the list is empty.
     func unsubscribe(patterns: [String]) async throws {
+        await waitForTransaction()
         try await connection.punsubscribe(from: patterns).get()
     }
 
     /// Unsubscribes from the given channels, or from every channel when the list is empty.
     func unsubscribe(channels: [String]) async throws {
+        await waitForTransaction()
         try await connection.unsubscribe(from: channels.map { RedisChannelName($0) }).get()
     }
     func publish(channel: String, message: RedisValue) async throws -> RedisResponse {
