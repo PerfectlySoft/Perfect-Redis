@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "PerfectRedis",
-    platforms: [.macOS(.v12), .iOS(.v15)],
+    platforms: [.macOS(.v12), .iOS(.v17)],
     products: [
         .library(name: "PerfectRedis", targets: ["PerfectRedis"]),
     ],

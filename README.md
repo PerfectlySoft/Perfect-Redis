@@ -5,7 +5,7 @@
         <img src="https://img.shields.io/badge/Swift-6.2%2B-orange.svg?style=flat" alt="Swift 6.2+">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B%20%7C%20iOS%2015%2B%20%7C%20Linux-lightgray.svg?style=flat" alt="Platforms macOS 12+ | iOS 15+ | Linux">
+        <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B%20%7C%20iOS%2017%2B%20%7C%20Linux-lightgray.svg?style=flat" alt="Platforms macOS 12+ | iOS 17+ | Linux">
     </a>
     <a href="http://perfect.org/licensing.html" target="_blank">
         <img src="https://img.shields.io/badge/License-Apache-lightgrey.svg?style=flat" alt="License Apache">
@@ -19,7 +19,7 @@ An async/await Redis client for Perfect, built on [swift-server/RediStack](https
 ## Requirements
 
 - Swift 6.2 or newer (`swift-tools-version: 6.2`, Swift 6 language mode).
-- macOS 12+, iOS 15+, or Linux. CI builds and tests on Ubuntu 24.04 with Swift 6.2 and 6.4, macOS with Xcode 26.0.1 and 26.6, and the iOS Simulator.
+- macOS 12+, iOS 17+, or Linux. CI builds and tests on Ubuntu 24.04 with Swift 6.2 and 6.4, macOS with Xcode 26.0.1 and 26.6, and the iOS Simulator.
 - A Redis server that speaks RESP2. The live tests run against Redis 7.
 - One external dependency, RediStack (`from: "1.6.0"`), which brings in SwiftNIO; SwiftPM resolves both.
 

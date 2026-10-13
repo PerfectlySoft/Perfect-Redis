@@ -85,7 +85,7 @@ jobs:
         run: swift test $FLAGS
 
   ios:
-    # The tests build at the package's iOS 15 deployment target, so this also catches APIs
+    # The tests build at the package's iOS 17 deployment target, so this also catches APIs
     # that need a newer iOS. The live suites skip; the fake-server tests run.
     name: iOS Simulator
     runs-on: macos-26
