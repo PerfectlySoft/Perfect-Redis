@@ -44,6 +44,17 @@ extension LiveRedisTests {
             }
         }
 
+        @Test func setGetEmptyString() async throws {
+            try await withRedis { client in
+                _ = try await client.set(key: "empty", value: .string(""))
+                let r = try await client.get(key: "empty")
+                #expect(!r.isNil, "An empty value must not read back as a missing key")
+                #expect(r.string == "")
+                let missing = try await client.get(key: "missing")
+                #expect(missing.isNil)
+            }
+        }
+
         @Test func setGetXX() async throws {
             try await withRedis { client in
                 let (key, value) = ("mykey", "myvalue")

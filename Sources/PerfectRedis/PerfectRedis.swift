@@ -64,10 +64,12 @@ extension RedisResponse {
         case .simpleString:
             self = .simpleString(value.string ?? "")
         case .bulkString(let buf):
+            // RediStack decodes an empty bulk string ("$0") as .bulkString(nil) and a null
+            // one ("$-1") as .null, so nil here is an empty value, not a missing one.
             if let buf {
-                self = .bulkString(buf.getBytes(at: buf.readerIndex, length: buf.readableBytes))
+                self = .bulkString(buf.getBytes(at: buf.readerIndex, length: buf.readableBytes) ?? [])
             } else {
-                self = .bulkString(nil)
+                self = .bulkString([])
             }
         case .integer(let i):
             self = .integer(i)
