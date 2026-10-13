@@ -777,12 +777,47 @@ public extension RedisClient {
             _ = try await multiBegin()
             do {
                 try await body()
-                return try await multiExec()
             } catch {
-                _ = try? await multiDiscard()
+                await abandonTransaction()
+                throw error
+            }
+            // A cancelled task can't send EXEC; closing the connection discards the MULTI.
+            guard !Task.isCancelled else {
+                await closeOutright()
+                throw CancellationError()
+            }
+            do {
+                return try await multiExec()
+            } catch let error as RedisError {
+                throw error  // The server answered EXEC, so the transaction is over.
+            } catch {
+                // EXEC may not have reached the server; don't leave MULTI open.
+                await closeOutright()
                 throw error
             }
         }
+    }
+
+    /// Ends a transaction whose body threw: DISCARD, or, if that can't be sent (the task is
+    /// cancelled) or doesn't get an answer, close the connection, which discards it too.
+    /// Otherwise other tasks' commands would be queued into the open MULTI.
+    private func abandonTransaction() async {
+        guard !Task.isCancelled else {
+            await closeOutright()
+            return
+        }
+        do {
+            _ = try await multiDiscard()
+        } catch is RedisError {
+            // The server answered DISCARD.
+        } catch {
+            await closeOutright()
+        }
+    }
+
+    /// Closes the connection at once, without waiting for outstanding replies.
+    private func closeOutright() async {
+        try? await channel.close()
     }
 }
 

@@ -125,5 +125,41 @@ extension LiveRedisTests {
             try await a.close()
             try await b.close()
         }
+    
+        /// A task cancelled while its multi body awaits something other than Redis must not
+        /// leave MULTI open: other tasks' commands would be QUEUED into it and a later EXEC
+        /// would commit the cancelled body's writes.
+        @Test(arguments: [false, true])
+        func cancellingTheBodyLeavesNoTransactionOpen(bodySwallowsCancellation: Bool) async throws {
+            let client = try await RedisTestEnvironment.connect()
+            _ = try await client.set(key: "cm", value: .string("before"))
+            let body = Task {
+                try await client.multi {
+                    _ = try await client.set(key: "cm", value: .string("inside"))
+                    if bodySwallowsCancellation {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                    } else {
+                        try await Task.sleep(nanoseconds: 300_000_000)
+                    }
+                }
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            body.cancel()
+            let outcome = await bounded(3, "cancelled multi") { try await body.value }
+            if case .success(let exec)? = outcome {
+                Issue.record("A cancelled multi returned \(exec)")
+            }
+            // The client either still works or has closed; it must never be inside MULTI.
+            if case .success(let reply)? = await bounded(3, "GET after cancelled multi", { try await client.get(key: "cm") }) {
+                #expect(reply.string == "before", "Got \(reply)")
+            }
+            if case .success(let reply)? = await bounded(3, "EXEC from outside", { try await client.multiExec() }) {
+                Issue.record("EXEC found an open transaction: \(reply)")
+            }
+            let fresh = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            #expect(try await fresh.get(key: "cm").string == "before")
+            try await fresh.close()
+            try? await client.close()
+        }
     }
 }

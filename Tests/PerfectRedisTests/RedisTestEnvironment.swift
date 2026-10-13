@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NIOConcurrencyHelpers
 @testable import PerfectRedis
 
 /// Where the live tests find a server. The live suites FLUSHALL, so only point them at a
@@ -59,3 +60,36 @@ struct LiveServerRequirementTests {
 /// run in parallel with each other.
 @Suite(.serialized, .enabled(if: RedisTestEnvironment.isEnabled, "Set REDIS_TESTS=1 to run against a server"))
 enum LiveRedisTests {}
+
+/// Runs `body`, but stops waiting after `seconds`: returns its result, or nil after
+/// recording an issue if it hasn't finished (the task is cancelled and left behind), so a
+/// regression fails the test instead of hanging the run.
+func bounded<T: Sendable>(
+    _ seconds: Double, _ what: String,
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ body: @escaping @Sendable () async throws -> T
+) async -> Result<T, Error>? {
+    let slot = NIOLockedValueBox<CheckedContinuation<Result<T, Error>?, Never>?>(nil)
+    let result = await withCheckedContinuation { continuation in
+        slot.withLockedValue { $0 = continuation }
+        let work = Task<Void, Never> {
+            let result: Result<T, Error>
+            do { result = .success(try await body()) } catch { result = .failure(error) }
+            slot.withLockedValue { $0?.resume(returning: result); $0 = nil }
+        }
+        Task<Void, Never> {
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            let timedOut = slot.withLockedValue { slot -> Bool in
+                guard let pending = slot else { return false }
+                pending.resume(returning: nil)
+                slot = nil
+                return true
+            }
+            if timedOut { work.cancel() }
+        }
+    }
+    if result == nil {
+        Issue.record("\(what) didn't finish within \(seconds) s", sourceLocation: sourceLocation)
+    }
+    return result
+}
