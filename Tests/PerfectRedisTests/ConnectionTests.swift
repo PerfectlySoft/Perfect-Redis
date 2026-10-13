@@ -186,4 +186,20 @@ import Testing
         #expect(server.closedConnections == 1, "The released client's connection was left open")
         await server.shutdown()
     }
+
+    /// RediStack never fails a pending subscription change when the connection drops, so
+    /// subscribe waited forever, and the client then refused commands as if subscribed.
+    @Test func subscriptionChangeEndsWhenTheConnectionDrops() async throws {
+        let server = try await FakeRedisServer([.close])
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let outcome = await bounded(5, "subscribe on a dropped connection") { try await client.subscribe(channels: ["x"]) }
+        if case .success? = outcome { Issue.record("subscribe succeeded on a closed connection") }
+        let ping = await bounded(5, "ping after") { try await client.ping() }
+        if case .failure(let error)? = ping {
+            #expect(!(error is RedisClient.CommandError), "Expected a closed-connection error, got \(error)")
+        } else if ping != nil {
+            Issue.record("ping succeeded on a closed connection")
+        }
+        await server.shutdown()
+    }
 }

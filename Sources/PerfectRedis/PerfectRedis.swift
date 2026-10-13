@@ -299,7 +299,8 @@ public actor RedisClient {
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
         await waitForTransaction()
-        guard !subscriptionMode else {
+        // On a closed connection, let RediStack report connectionClosed instead.
+        guard !subscriptionMode || !connection.isConnected else {
             throw CommandError(
                 "\(command) can't be sent while this client has subscriptions; use another client, or unsubscribe from everything first"
             )
@@ -367,8 +368,9 @@ public actor RedisClient {
     /// Awaits a reply, honouring commandTimeout and task cancellation. Either one closes the
     /// connection: the command has been sent, so abandoning only its reply would leave the
     /// server's next reply to be paired with whatever is sent next. The wait ends on the
-    /// timeout or cancellation itself rather than on the future failing, because RediStack
-    /// doesn't fail every future (pending subscription changes) when its channel closes.
+    /// timeout, cancellation or channel closing itself rather than on the future failing,
+    /// because RediStack doesn't fail every future (pending subscription changes) when its
+    /// channel closes.
     func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>) async throws -> Value {
         let waiter = ReplyWaiter<Value>()
         let channel = self.channel
@@ -377,6 +379,8 @@ public actor RedisClient {
             try await withCheckedThrowingContinuation { continuation in
                 guard waiter.install(continuation) else { return }
                 future.whenComplete { waiter.finish($0) }
+                // RediStack doesn't fail pending subscription changes when the channel closes.
+                channel.closeFuture.whenComplete { _ in waiter.finish(.failure(RedisClientError.connectionClosed)) }
                 if let timeout {
                     let timer = future.eventLoop.scheduleTask(in: timeout) {
                         let ms = timeout.nanoseconds / 1_000_000
