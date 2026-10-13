@@ -349,14 +349,21 @@ public actor RedisClient {
             }
             let id = UUID()
             await withTaskCancellationHandler {
-                await withCheckedContinuation { continuation in
-                    stateWaiters[id] = continuation
-                    if let deadline {
-                        channel.eventLoop.scheduleTask(deadline: deadline) { Task { await self.wake(id) } }
-                    }
-                }
+                // Through an actor method: Swift 6.4's release builds otherwise run this
+                // continuation's body off the actor and trap on the isolation check.
+                await self.park(id, until: deadline)
             } onCancel: {
                 Task { await self.wake(id) }
+            }
+        }
+    }
+
+    /// Suspends until `wake(id)`, a state change, or `deadline`.
+    private func park(_ id: UUID, until deadline: NIODeadline?) async {
+        await withCheckedContinuation { continuation in
+            stateWaiters[id] = continuation
+            if let deadline {
+                channel.eventLoop.scheduleTask(deadline: deadline) { Task { await self.wake(id) } }
             }
         }
     }
