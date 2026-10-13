@@ -298,7 +298,7 @@ public actor RedisClient {
 
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
-        await waitForTransaction()
+        try await waitForTransaction()
         // On a closed connection, let RediStack report connectionClosed instead.
         guard !subscriptionMode || !connection.isConnected else {
             throw CommandError(
@@ -317,7 +317,6 @@ public actor RedisClient {
 
     /// Commands sent whose replies haven't arrived.
     private var inFlight = 0
-    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     /// From the start of the first subscribe until the last subscription ends. Ordinary
     /// commands are refused meanwhile: RediStack's pub/sub handler inspects every reply, so a
     /// reply shaped like a subscription message (ordinary data can be) would be misread.
@@ -325,10 +324,47 @@ public actor RedisClient {
 
     private func commandFinished() {
         inFlight -= 1
-        guard inFlight == 0 else { return }
-        let waiters = idleWaiters
-        idleWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+        if inFlight == 0 { stateChanged() }
+    }
+
+    // MARK: Waiting for the client's state
+
+    private var stateWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    /// Suspends until `condition` holds, re-checking it whenever the client's state changes.
+    /// Throws CancellationError if the task is cancelled, and CommandError once
+    /// commandTimeout has passed. Nothing has been sent, so neither closes the connection.
+    func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
+        let deadline = commandTimeout.map { NIODeadline.now() + $0 }
+        while !condition() {
+            try Task.checkCancellation()
+            if let deadline, deadline <= .now() {
+                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
+                throw CommandError("Waited more than \(ms) ms for \(what)")
+            }
+            let id = UUID()
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    stateWaiters[id] = continuation
+                    if let deadline {
+                        channel.eventLoop.scheduleTask(deadline: deadline) { Task { await self.wake(id) } }
+                    }
+                }
+            } onCancel: {
+                Task { await self.wake(id) }
+            }
+        }
+    }
+
+    private func wake(_ id: UUID) {
+        stateWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    /// Lets every waiter re-check its condition.
+    private func stateChanged() {
+        let waiters = stateWaiters
+        stateWaiters.removeAll()
+        for waiter in waiters.values { waiter.resume() }
     }
 
     /// Enters subscription mode once every command already sent has its reply, so none of
@@ -337,20 +373,23 @@ public actor RedisClient {
         if let current = currentTransaction, current == transactionOwner {
             throw CommandError("subscribe can't be used inside multi(body:)")
         }
-        await waitForTransaction()
+        try await waitForTransaction()
         subscriptionMode = true
-        while inFlight > 0 {
-            await withCheckedContinuation { idleWaiters.append($0) }
-        }
+        try await waitUntil("commands in flight to finish before subscribing") { inFlight == 0 }
     }
 
     private var pendingSubscriptionChanges = 0
 
     func changeSubscriptions(entering: Bool, _ change: () -> EventLoopFuture<Void>) async throws {
         if entering {
-            try await enterSubscriptionMode()
+            do {
+                try await enterSubscriptionMode()
+            } catch {
+                subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
+                throw error
+            }
         } else {
-            await waitForTransaction()
+            try await waitForTransaction()
         }
         if Task.isCancelled {
             subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
@@ -406,13 +445,12 @@ public actor RedisClient {
     private var currentTransaction: UUID? { Self.currentTransactions[ObjectIdentifier(self)] }
     /// The transaction whose MULTI is open on the connection.
     private var transactionOwner: UUID?
-    private var transactionWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// Suspends while a `multi(body:)` call that the current task isn't part of is open, so
     /// other callers' commands don't get queued into it.
-    func waitForTransaction() async {
-        while let owner = transactionOwner, owner != currentTransaction {
-            await withCheckedContinuation { transactionWaiters.append($0) }
+    func waitForTransaction() async throws {
+        try await waitUntil("another task's multi(body:) to finish") {
+            transactionOwner == nil || transactionOwner == currentTransaction
         }
     }
 
@@ -420,7 +458,7 @@ public actor RedisClient {
         if let current = currentTransaction, current == transactionOwner {
             throw CommandError("multi(body:) calls cannot be nested")
         }
-        await waitForTransaction()
+        try await waitForTransaction()
         let id = UUID()
         transactionOwner = id
         return id
@@ -428,9 +466,7 @@ public actor RedisClient {
 
     func endTransaction() {
         transactionOwner = nil
-        let waiters = transactionWaiters
-        transactionWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+        stateChanged()
     }
 }
 
