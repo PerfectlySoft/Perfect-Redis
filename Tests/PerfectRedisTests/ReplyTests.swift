@@ -37,4 +37,24 @@ import Testing
         #expect(elements[0].string == "")
         #expect(elements[1].isNil)
     }
+
+    @Test func errorInsideArrayKeepsItsType() async throws {
+        // EXEC returns per-command errors inside its array reply.
+        let response = try await decode("*2\r\n+OK\r\n-WRONGTYPE Operation against a key\r\n")
+        guard case .array(let elements) = response, elements.count == 2,
+              case .error(let type, let msg) = elements[1] else {
+            Issue.record("Expected [OK, error], got \(response)"); return
+        }
+        #expect(type == "WRONGTYPE")
+        #expect(msg == "Operation against a key")
+    }
+
+    @Test func errorWithoutMessage() async throws {
+        let response = try await decode("*1\r\n-ERR\r\n")
+        guard case .array(let elements) = response, case .error(let type, let msg) = elements.first else {
+            Issue.record("Expected [error], got \(response)"); return
+        }
+        #expect(type == "ERR")
+        #expect(msg == "")
+    }
 }

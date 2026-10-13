@@ -58,6 +58,8 @@ public enum RedisResponse: Sendable {
 
 // MARK: - RESPValue → RedisResponse
 
+private let redisErrorPrefix = "(Redis) "
+
 extension RedisResponse {
     init(_ value: RESPValue) {
         switch value {
@@ -76,10 +78,13 @@ extension RedisResponse {
         case .array(let arr):
             self = .array(arr.map { RedisResponse($0) })
         case .error(let e):
-            let parts = e.message.split(separator: " ", maxSplits: 1)
+            // RedisError prefixes the server's text with "(Redis) ".
+            var text = Substring(e.message)
+            if text.hasPrefix(redisErrorPrefix) { text = text.dropFirst(redisErrorPrefix.count) }
+            let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
             self = .error(
-                type: parts.first.map(String.init) ?? "ERR",
-                msg: parts.dropFirst().first.map(String.init) ?? e.message
+                type: parts.first.map(String.init).flatMap { $0.isEmpty ? nil : $0 } ?? "ERR",
+                msg: parts.dropFirst().first.map(String.init) ?? ""
             )
         case .null:
             self = .bulkString(nil)
