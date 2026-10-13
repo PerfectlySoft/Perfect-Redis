@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    # Runs every test, including the live ones against a Redis 7 service.
+    name: Linux (Swift ${{ matrix.swift }}, ${{ matrix.configuration }})
+    runs-on: ubuntu-24.04
+    container: swift:${{ matrix.swift }}-noble
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest supported Swift (swift-tools-version 6.2) and the newest.
+        swift: ["6.2", "6.4"]
+        configuration: [debug, release]
+    services:
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      # The live tests FLUSHALL; they run only when these name a throwaway server.
+      REDIS_TESTS: "1"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Fail, rather than skip, if the live tests can't reach the service.
+      REDIS_REQUIRE_LIVE: "1"
+      TZ: America/Denver
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build (warnings are errors)
+        run: |
+          flags="-c ${{ matrix.configuration }} -Xswiftc -warnings-as-errors"
+          # @testable imports need testing enabled in an optimized build.
+          [ "${{ matrix.configuration }}" = release ] && flags="$flags -Xswiftc -enable-testing"
+          echo "FLAGS=$flags" >> "$GITHUB_ENV"
+          swift build --build-tests $flags
+
+      - name: Test
+        run: swift test $FLAGS
+
+  macos:
+    # GitHub's macOS runners have no Redis server, so the live suites report as skipped;
+    # the reply, framing, argument and connection tests run against a scripted fake server.
+    name: macOS (Xcode ${{ matrix.xcode }}, ${{ matrix.configuration }})
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      TZ: America/Denver
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Xcode with Swift 6.2, and the runner's default.
+        xcode: ["26.0.1", "26.6"]
+        configuration: [debug, release]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_${{ matrix.xcode }}.app
+          swift --version
+
+      - name: Build (warnings are errors)
+        run: |
+          flags="-c ${{ matrix.configuration }} -Xswiftc -warnings-as-errors"
+          # @testable imports need testing enabled in an optimized build.
+          [ "${{ matrix.configuration }}" = release ] && flags="$flags -Xswiftc -enable-testing"
+          echo "FLAGS=$flags" >> "$GITHUB_ENV"
+          swift build --build-tests $flags
+
+      - name: Test
+        run: swift test $FLAGS
+
+  ios:
+    # No iOS platform is declared, but the package builds and its server-free tests pass
+    # in the simulator, so keep it that way.
+    name: iOS Simulator
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      # On a fresh runner the simulator service can start late, and xcodebuild then lists no
+      # simulators at all ("Unable to find a device"). Wait until it offers the one we test on.
+      # Listing devices with simctl makes the service refresh its runtimes
+      # (actions/runner-images#12948).
+      - name: Wait for the simulator
+        run: |
+          deadline=$((SECONDS + 300))
+          while [ $SECONDS -lt $deadline ]; do
+            xcrun simctl list devices available > /dev/null 2>&1 || true
+            if destinations=$(xcodebuild -showdestinations -scheme PerfectRedis) \
+                && grep -q "name:iPhone 17 }" <<< "$destinations"; then
+              exit 0
+            fi
+            echo "No iPhone 17 simulator yet; retrying in 5 seconds"
+            sleep 5
+          done
+          echo "No iPhone 17 simulator after 5 minutes"
+          xcrun simctl list devices available
+          exit 1
+
+      # SWIFT_TREAT_WARNINGS_AS_ERRORS would also reach the dependencies, which Xcode builds
+      # with -suppress-warnings, and the two flags conflict. So fail on any warning in this
+      # repository's own files instead.
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test -scheme PerfectRedis \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -destination-timeout 120 2>&1 | tee build.log
+          if grep -E "^$GITHUB_WORKSPACE/(Sources|Tests)/.*: warning:" build.log; then
+            echo "Warnings in Perfect-Redis sources"
+            exit 1
+          fi
