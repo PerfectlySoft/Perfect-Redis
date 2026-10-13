@@ -155,4 +155,20 @@ import Testing
         #expect(seconds < 5)
         await server.shutdown()
     }
+
+    /// A task that is already cancelled used to send its command and then close the
+    /// connection for everyone; now it throws without sending.
+    @Test func alreadyCancelledTaskSendsNothing() async throws {
+        let server = try await FakeRedisServer(replies: "+PONG\r\n")
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.ping()
+        }
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let pong = try await client.ping()
+        #expect(pong.string == "PONG")
+        try await client.close()
+        await server.shutdown()
+    }
 }

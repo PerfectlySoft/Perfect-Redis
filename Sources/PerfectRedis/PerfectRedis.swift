@@ -301,6 +301,9 @@ public actor RedisClient {
                 "\(command) can't be sent while this client has subscriptions; use another client, or unsubscribe from everything first"
             )
         }
+        // Cancelled already: don't send, since cancelling an in-flight command closes the
+        // connection for every task using this client.
+        try Task.checkCancellation()
         inFlight += 1
         defer { commandFinished() }
         return try await awaitReply(connection.send(command: command, with: args).map { RedisResponse($0) })
@@ -344,6 +347,10 @@ public actor RedisClient {
             try await enterSubscriptionMode()
         } else {
             await waitForTransaction()
+        }
+        if Task.isCancelled {
+            subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
+            throw CancellationError()
         }
         pendingSubscriptionChanges += 1
         defer {
