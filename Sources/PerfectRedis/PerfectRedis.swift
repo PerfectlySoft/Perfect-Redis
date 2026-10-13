@@ -227,6 +227,17 @@ public actor RedisClient {
                     )
                 }
             }
+        // commandTimeout also bounds connecting: the TCP connect, then AUTH and anything else
+        // RediStack sends before handing over the connection.
+        let timedOut = NIOLockedValueBox(false)
+        var deadline: Scheduled<Void>?
+        if let commandTimeout {
+            _ = bootstrap.connectTimeout(commandTimeout)
+            deadline = eventLoop.scheduleTask(in: commandTimeout) {
+                timedOut.withLockedValue { $0 = true }
+                opened.withLockedValue { $0 }?.close(promise: nil)
+            }
+        }
         let connection: RedisConnection
         do {
             connection = try await RedisConnection.make(
@@ -234,9 +245,19 @@ public actor RedisClient {
                 boundEventLoop: eventLoop,
                 configuredTCPClient: bootstrap
             ).get()
+            deadline?.cancel()
+            if timedOut.withLockedValue({ $0 }) {
+                // The deadline closed the channel just as RediStack finished.
+                throw CommandError("Connection closed by commandTimeout while connecting")
+            }
         } catch {
+            deadline?.cancel()
             // A failed AUTH leaves the socket open; RediStack doesn't close it.
             try? await opened.withLockedValue { $0 }?.close()
+            if timedOut.withLockedValue({ $0 }) {
+                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
+                throw CommandError("Couldn't connect and authenticate within \(ms) ms")
+            }
             throw error
         }
         guard let channel = opened.withLockedValue({ $0 }) else {

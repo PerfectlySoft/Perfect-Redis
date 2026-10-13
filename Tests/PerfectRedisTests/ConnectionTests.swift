@@ -144,4 +144,15 @@ import Testing
         #expect(seconds < 5)
         await server.shutdown()
     }
+
+    /// AUTH is sent while connecting; a server that never answers it hung connect().
+    @Test func connectHonoursTheTimeoutDuringAuth() async throws {
+        let server = try await FakeRedisServer([.silence])
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, password: "pw", commandTimeout: 0.3)
+        let seconds = await elapsed {
+            await #expect(throws: RedisClient.CommandError.self) { try await RedisClient.connect(withIdentifier: id) }
+        }
+        #expect(seconds < 5)
+        await server.shutdown()
+    }
 }
