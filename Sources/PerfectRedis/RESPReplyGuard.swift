@@ -10,7 +10,8 @@ import NIOCore
 /// stream and, on anything out of bounds, raises an error instead of passing the bytes on.
 /// RediStack then fails every pending command and closes the connection.
 ///
-/// It only checks framing: lengths, counts, nesting depth and type bytes. Contents are left
+/// It only checks framing: lengths, counts, nesting depth, CRLF line ends and type bytes.
+/// Contents are left
 /// to RediStack's parser.
 final class RESPReplyGuard: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
@@ -29,8 +30,9 @@ final class RESPReplyGuard: ChannelInboundHandler {
     private enum State {
         /// Expecting the type byte of the next value.
         case type
-        /// Inside a simple string, error or integer line; skip to its LF.
-        case line
+        /// Inside a simple string, error or integer line; skip to its CRLF. `lastWasCR` carries
+        /// the last byte of the previous read, in case CR and LF arrive separately.
+        case line(lastWasCR: Bool)
         /// Reading the length of a bulk string (`$`) or the count of an array (`*`).
         case header(kind: UInt8, bytes: [UInt8])
         /// Skipping a bulk string's content and trailing CRLF.
@@ -72,18 +74,23 @@ final class RESPReplyGuard: ChannelInboundHandler {
                 i += 1
                 switch byte {
                 case UInt8(ascii: "+"), UInt8(ascii: "-"), UInt8(ascii: ":"):
-                    state = .line
+                    state = .line(lastWasCR: false)
                 case UInt8(ascii: "$"), UInt8(ascii: "*"):
                     state = .header(kind: byte, bytes: [])
                 default:
                     throw violation("unknown type byte \(byte)")
                 }
 
-            case .line:
+            case .line(let lastWasCR):
                 guard let newline = bytes[i...].firstIndex(of: UInt8(ascii: "\n")) else {
+                    state = .line(lastWasCR: bytes[bytes.index(before: bytes.endIndex)] == UInt8(ascii: "\r"))
                     i = bytes.endIndex
                     continue
                 }
+                // RediStack drops the byte before LF whatever it is, so a bare LF would make
+                // it and this guard disagree about where the value ends.
+                let crBefore = newline > i ? bytes[newline - 1] == UInt8(ascii: "\r") : lastWasCR
+                guard crBefore else { throw violation("line ends in LF without CR") }
                 i = newline + 1
                 completeValue()
 
@@ -98,7 +105,11 @@ final class RESPReplyGuard: ChannelInboundHandler {
                     state = .header(kind: kind, bytes: header)
                     continue
                 }
-                if header.last == UInt8(ascii: "\r") { header.removeLast() }
+                // As for lines: without the CR, RediStack would read one digit fewer.
+                guard header.last == UInt8(ascii: "\r") else {
+                    throw violation("length header ends in LF without CR")
+                }
+                header.removeLast()
                 guard let value = Int(String(decoding: header, as: UTF8.self)) else {
                     throw violation("invalid length header")
                 }

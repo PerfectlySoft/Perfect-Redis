@@ -67,6 +67,39 @@ import Testing
         try await expectRejected("%1\r\n+a\r\n+b\r\n")
     }
 
+    // RediStack drops whatever byte precedes LF, so a header or line ending in a bare LF is
+    // read differently by the guard and the parser. It must be rejected, not reinterpreted.
+    @Test(arguments: ["$5\n", "*1\n", "+\n", "+OK\n", ":1\n", "-ERR\n", "$-1\n", "*0\n"])
+    func lineEndingWithoutCarriageReturn(_ reply: String) async throws {
+        try await expectRejected(reply)
+    }
+
+    /// "$55\n" is 55 to a guard that tolerates a bare LF but 5 to RediStack, which then
+    /// parses the "body" as new values: here an overflowing bulk length.
+    @Test func bareLineFeedCannotSmuggleAnOverflow() async throws {
+        var body = "abcde\r\n$9223372036854775807\r\n"
+        body += String(repeating: "x", count: 57 - body.utf8.count)
+        try await expectRejected("$55\n" + body)
+    }
+
+    @Test func bareLineFeedCannotSmuggleDeepNesting() async throws {
+        let nested = String(repeating: "*1\r\n", count: 200_000)
+        try await expectRejected("$1000009\n" + String(repeating: "x", count: 100_000) + "\r\n" + nested)
+    }
+
+    @Test func carriageReturnSplitFromLineFeedAcrossReads() throws {
+        let channel = EmbeddedChannel(handler: RESPReplyGuard())
+        for chunk in ["+OK\r", "\n", "$3\r", "\nabc\r\n", "*1\r", "\n:1\r", "\n"] {
+            try channel.writeInbound(channel.allocator.buffer(string: chunk))
+        }
+        // A line split after a byte that isn't CR is still caught.
+        #expect(throws: RedisClient.CommandError.self) {
+            try channel.writeInbound(channel.allocator.buffer(string: "+OK"))
+            try channel.writeInbound(channel.allocator.buffer(string: "\n"))
+        }
+        _ = try? channel.finish()
+    }
+
     @Test func nestingAtTheLimitIsAccepted() async throws {
         let depth = RESPReplyGuard.maxDepth
         let (first, second) = try await exchange(String(repeating: "*1\r\n", count: depth) + ":7\r\n")
