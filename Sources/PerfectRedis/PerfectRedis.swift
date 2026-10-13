@@ -317,10 +317,12 @@ public actor RedisClient {
 
     /// Commands sent whose replies haven't arrived.
     private var inFlight = 0
-    /// From the start of the first subscribe until the last subscription ends. Ordinary
+    /// While a subscription change is under way or any subscription is active. Ordinary
     /// commands are refused meanwhile: RediStack's pub/sub handler inspects every reply, so a
     /// reply shaped like a subscription message (ordinary data can be) would be misread.
-    private var subscriptionMode = false
+    private var subscriptionMode: Bool {
+        subscriptionChangesActive > 0 || connection.isSubscribed
+    }
 
     private func commandFinished() {
         inFlight -= 1
@@ -367,40 +369,44 @@ public actor RedisClient {
         for waiter in waiters.values { waiter.resume() }
     }
 
-    /// Enters subscription mode once every command already sent has its reply, so none of
-    /// those replies pass through RediStack's pub/sub handler.
-    func enterSubscriptionMode() async throws {
-        if let current = currentTransaction, current == transactionOwner {
+    /// Subscription changes between entry and exit, waiting or in progress.
+    private var subscriptionChangesActive = 0
+    /// Subscription changes run one at a time, in arrival order, by ticket.
+    private var nextSubscriptionTicket = 0
+    private var servingSubscriptionTicket = 0
+    private var abandonedSubscriptionTickets: Set<Int> = []
+
+    /// Runs one subscribe or unsubscribe. Changes run one at a time in arrival order: two at
+    /// once confuse RediStack (an unsubscribe-all completing while a subscribe is pending
+    /// removes its pub/sub handler and the subscribe never completes). From entry to exit the
+    /// client counts as subscribing, so no ordinary command goes out meanwhile, and a
+    /// subscribe first waits for commands already in flight, so none of their replies pass
+    /// through RediStack's pub/sub handler.
+    func changeSubscriptions(entering: Bool, _ change: () -> EventLoopFuture<Void>) async throws {
+        if entering, let current = currentTransaction, current == transactionOwner {
             throw CommandError("subscribe can't be used inside multi(body:)")
         }
         try await waitForTransaction()
-        subscriptionMode = true
-        try await waitUntil("commands in flight to finish before subscribing") { inFlight == 0 }
-    }
-
-    private var pendingSubscriptionChanges = 0
-
-    func changeSubscriptions(entering: Bool, _ change: () -> EventLoopFuture<Void>) async throws {
-        if entering {
-            do {
-                try await enterSubscriptionMode()
-            } catch {
-                subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
-                throw error
-            }
-        } else {
-            try await waitForTransaction()
-        }
-        if Task.isCancelled {
-            subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
-            throw CancellationError()
-        }
-        pendingSubscriptionChanges += 1
+        subscriptionChangesActive += 1
+        let ticket = nextSubscriptionTicket
+        nextSubscriptionTicket += 1
         defer {
-            pendingSubscriptionChanges -= 1
-            // Leave subscription mode once RediStack has no subscriptions left.
-            subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
+            subscriptionChangesActive -= 1
+            if servingSubscriptionTicket == ticket {
+                servingSubscriptionTicket += 1
+                while abandonedSubscriptionTickets.remove(servingSubscriptionTicket) != nil {
+                    servingSubscriptionTicket += 1
+                }
+            } else {
+                abandonedSubscriptionTickets.insert(ticket)
+            }
+            stateChanged()
         }
+        try await waitUntil("earlier subscription changes") { servingSubscriptionTicket == ticket }
+        if entering {
+            try await waitUntil("commands in flight to finish before subscribing") { inFlight == 0 }
+        }
+        try Task.checkCancellation()
         try await awaitReply(change())
     }
 

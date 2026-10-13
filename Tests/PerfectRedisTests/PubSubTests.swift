@@ -122,6 +122,61 @@ extension LiveRedisTests {
             try await client.close()
         }
 
+        /// While a subscribe waits for a command in flight, nothing else may reset the client's
+        /// subscribing state: a concurrent unsubscribe used to, letting a PING go out
+        /// mid-SUBSCRIBE.
+        @Test func concurrentUnsubscribeDoesNotReopenTheClient() async throws {
+            let client = try await RedisTestEnvironment.connect()
+            let blpop = Task { try await client.listPopFirstBlocking(keys: "nothing", timeout: 1) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let subscribe = Task { try await client.subscribe(channels: ["x"]) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let unsubscribe = Task { try await client.unsubscribe(channels: []) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let ping = await bounded(3, "PING while subscribing") { try await client.ping() }
+            if case .success(let reply)? = ping { Issue.record("PING went out while subscribing: \(reply)") }
+            _ = await bounded(5, "BLPOP") { try await blpop.value }
+            _ = await bounded(5, "subscribe") { try await subscribe.value }
+            _ = await bounded(5, "unsubscribe") { try await unsubscribe.value }
+            try? await client.close()
+        }
+
+        @Test func cancelledSubscribeDoesNotReopenTheClient() async throws {
+            let client = try await RedisTestEnvironment.connect()
+            let blpop = Task { try await client.listPopFirstBlocking(keys: "nothing", timeout: 1) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let a = Task { try await client.subscribe(channels: ["a"]) }
+            let b = Task { try await client.subscribe(channels: ["b"]) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            a.cancel()
+            _ = await bounded(3, "cancelled subscribe") { try await a.value }
+            let ping = await bounded(3, "PING while b subscribes") { try await client.ping() }
+            if case .success(let reply)? = ping { Issue.record("PING went out while subscribing: \(reply)") }
+            _ = await bounded(5, "BLPOP") { try await blpop.value }
+            let bOutcome = await bounded(5, "subscribe b") { try await b.value }
+            if case .failure(let error)? = bOutcome { Issue.record("subscribe b failed: \(error)") }
+            try? await client.close()
+        }
+
+        /// An unsubscribe-all racing a subscribe used to leave the subscribe waiting forever
+        /// while the server had the client subscribed.
+        @Test func unsubscribeAllRacingSubscribeBothFinish() async throws {
+            let client = try await RedisTestEnvironment.connect()
+            let publisher = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            try await client.subscribe(channels: ["x"])
+            let unsubscribe = Task { try await client.unsubscribe(channels: []) }
+            let subscribe = Task { try await client.subscribe(channels: ["y"]) }
+            let u = await bounded(4, "unsubscribe-all") { try await unsubscribe.value }
+            let s = await bounded(4, "subscribe y") { try await subscribe.value }
+            if case .failure(let error)? = u { Issue.record("unsubscribe failed: \(error)") }
+            if case .failure(let error)? = s { Issue.record("subscribe failed: \(error)") }
+            // They ran in order, so the client ends subscribed to y only.
+            #expect(try await publisher.publish(channel: "y", message: .string("m")).integer == 1)
+            #expect(try await publisher.publish(channel: "x", message: .string("m")).integer == 0)
+            try? await client.close()
+            try await publisher.close()
+        }
+
         @Test func emptySubscriptionListIsRejected() async throws {
             let client = try await RedisTestEnvironment.connect()
             await #expect(throws: RedisClient.CommandError.self) { try await client.subscribe(channels: []) }
