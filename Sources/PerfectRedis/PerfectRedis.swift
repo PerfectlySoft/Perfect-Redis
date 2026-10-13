@@ -162,6 +162,12 @@ public actor RedisClient {
 
     private let connection: RedisConnection
 
+    /// Messages published to the channels and patterns this client subscribes to, in arrival
+    /// order. The stream is unbounded and ends when the client is closed or deinitialised.
+    /// It is shared by every subscription on this client, so iterate it from one task.
+    public nonisolated let messages: AsyncStream<PublishedMessage>
+    private nonisolated let messageSink: AsyncStream<PublishedMessage>.Continuation
+
     public static func connect(
         withIdentifier id: RedisClientIdentifier = RedisClientIdentifier()
     ) async throws -> RedisClient {
@@ -189,9 +195,15 @@ public actor RedisClient {
 
     private init(connection: RedisConnection) {
         self.connection = connection
+        (messages, messageSink) = AsyncStream.makeStream(of: PublishedMessage.self)
+    }
+
+    deinit {
+        messageSink.finish()
     }
 
     public func close() async throws {
+        messageSink.finish()
         _ = try await connection.close().get()
     }
 
@@ -546,17 +558,56 @@ public extension RedisClient {
 // MARK: - Pub/sub
 
 public extension RedisClient {
-    func subscribe(patterns: [String]) async throws -> RedisResponse {
-        try await send("PSUBSCRIBE", patterns.map { arg($0) })
+    /// A message delivered to one of this client's subscriptions.
+    struct PublishedMessage: Sendable {
+        /// The channel it was published to (for a pattern subscription, the matching channel).
+        public let channel: String
+        /// The published payload, normally a `.bulkString`.
+        public let message: RedisResponse
     }
-    func subscribe(channels: [String]) async throws -> RedisResponse {
-        try await send("SUBSCRIBE", channels.map { arg($0) })
+
+    /// Subscribes to channels matching each glob-style pattern. Messages arrive on `messages`.
+    ///
+    /// While any subscription is active, Redis accepts only subscription commands, PING,
+    /// QUIT and RESET on this connection; use another client for everything else.
+    func subscribe(patterns: [String]) async throws {
+        guard !patterns.isEmpty else { throw CommandError("subscribe(patterns:) needs at least one pattern") }
+        let sink = messageSink
+        try await connection.psubscribe(
+            to: patterns,
+            messageReceiver: { channel, value in
+                sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+            },
+            onSubscribe: nil,
+            onUnsubscribe: nil
+        ).get()
     }
-    func unsubscribe(patterns: [String]) async throws -> RedisResponse {
-        try await send("PUNSUBSCRIBE", patterns.map { arg($0) })
+
+    /// Subscribes to channels. Messages arrive on `messages`.
+    ///
+    /// While any subscription is active, Redis accepts only subscription commands, PING,
+    /// QUIT and RESET on this connection; use another client for everything else.
+    func subscribe(channels: [String]) async throws {
+        guard !channels.isEmpty else { throw CommandError("subscribe(channels:) needs at least one channel") }
+        let sink = messageSink
+        try await connection.subscribe(
+            to: channels.map { RedisChannelName($0) },
+            messageReceiver: { channel, value in
+                sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+            },
+            onSubscribe: nil,
+            onUnsubscribe: nil
+        ).get()
     }
-    func unsubscribe(channels: [String]) async throws -> RedisResponse {
-        try await send("UNSUBSCRIBE", channels.map { arg($0) })
+
+    /// Unsubscribes from the given patterns, or from every pattern when the list is empty.
+    func unsubscribe(patterns: [String]) async throws {
+        try await connection.punsubscribe(from: patterns).get()
+    }
+
+    /// Unsubscribes from the given channels, or from every channel when the list is empty.
+    func unsubscribe(channels: [String]) async throws {
+        try await connection.unsubscribe(from: channels.map { RedisChannelName($0) }).get()
     }
     func publish(channel: String, message: RedisValue) async throws -> RedisResponse {
         try await send("PUBLISH", [arg(channel), message.resp])
