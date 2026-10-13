@@ -100,12 +100,14 @@ public struct RedisClientIdentifier: Sendable {
     public let host: String
     public let port: Int
     public let password: String
-    /// Seconds to wait for each command's reply before closing the connection and throwing
-    /// `CommandError`, or nil (the default) to wait indefinitely. It also bounds blocking
-    /// commands such as BLPOP, so give those a server-side timeout shorter than this;
-    /// subscription changes; connecting (not the host name lookup) and AUTH; and waits for
-    /// another task's transaction or for commands in flight before a subscribe, which throw
-    /// without closing the connection.
+    /// Seconds each call may take, or nil (the default) to wait indefinitely. It is one budget
+    /// for the whole call: waiting behind another task's transaction, behind earlier
+    /// subscription changes, or (for subscribe) for commands in flight, and then for the
+    /// reply. If it runs out while waiting, nothing has been sent and the call throws
+    /// `CommandError`; if it runs out while waiting for the reply, the connection is closed
+    /// too. It also bounds blocking commands such as BLPOP, so give those a server-side
+    /// timeout shorter than this, and connecting (from the TCP connection on, including
+    /// AUTH, but not the host name lookup).
     public let commandTimeout: Double?
     /// Where RediStack logs this connection's activity, or nil (the default) for nowhere.
     ///
@@ -311,7 +313,8 @@ public actor RedisClient {
 
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
-        try await waitForTransaction()
+        let deadline = newDeadline()
+        try await waitForTransaction(deadline: deadline)
         // On a closed connection, let RediStack report connectionClosed instead.
         guard !subscriptionMode || !connection.isConnected else {
             throw CommandError(
@@ -321,9 +324,29 @@ public actor RedisClient {
         // Cancelled already: don't send, since cancelling an in-flight command closes the
         // connection for every task using this client.
         try Task.checkCancellation()
+        try checkDeadline(deadline, waitingFor: "its turn")
         inFlight += 1
         defer { commandFinished() }
-        return try await awaitReply(connection.send(command: command, with: args).map { RedisResponse($0) })
+        return try await awaitReply(
+            connection.send(command: command, with: args).map { RedisResponse($0) }, deadline: deadline
+        )
+    }
+
+    /// When a call started now must finish: commandTimeout is one budget for the whole call,
+    /// every wait included.
+    func newDeadline() -> NIODeadline? {
+        commandTimeout.map { NIODeadline.now() + $0 }
+    }
+
+    private var timeoutDescription: String {
+        "the commandTimeout of \((commandTimeout?.nanoseconds ?? 0) / 1_000_000) ms"
+    }
+
+    /// Throws CommandError, before anything is sent, if the deadline has passed.
+    func checkDeadline(_ deadline: NIODeadline?, waitingFor what: String) throws {
+        if let deadline, deadline <= .now() {
+            throw CommandError("Waited \(timeoutDescription) for \(what)")
+        }
     }
 
     // MARK: Subscription mode
@@ -347,16 +370,12 @@ public actor RedisClient {
     private var stateWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     /// Suspends until `condition` holds, re-checking it whenever the client's state changes.
-    /// Throws CancellationError if the task is cancelled, and CommandError once
-    /// commandTimeout has passed. Nothing has been sent, so neither closes the connection.
-    func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
-        let deadline = commandTimeout.map { NIODeadline.now() + $0 }
+    /// Throws CancellationError if the task is cancelled, and CommandError once the call's
+    /// deadline has passed. Nothing has been sent, so neither closes the connection.
+    func waitUntil(_ what: String, deadline: NIODeadline?, _ condition: () -> Bool) async throws {
         while !condition() {
             try Task.checkCancellation()
-            if let deadline, deadline <= .now() {
-                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
-                throw CommandError("Waited more than \(ms) ms for \(what)")
-            }
+            try checkDeadline(deadline, waitingFor: what)
             let id = UUID()
             await withTaskCancellationHandler {
                 // Through an actor method: Swift 6.4's release builds otherwise run this
@@ -408,7 +427,8 @@ public actor RedisClient {
         if entering, let current = currentTransaction, current == transactionOwner {
             throw CommandError("subscribe can't be used inside multi(body:)")
         }
-        try await waitForTransaction()
+        let deadline = newDeadline()
+        try await waitForTransaction(deadline: deadline)
         subscriptionChangesActive += 1
         let ticket = nextSubscriptionTicket
         nextSubscriptionTicket += 1
@@ -424,17 +444,22 @@ public actor RedisClient {
             }
             stateChanged()
         }
-        try await waitUntil("earlier subscription changes") { servingSubscriptionTicket == ticket }
+        try await waitUntil("earlier subscription changes", deadline: deadline) {
+            servingSubscriptionTicket == ticket
+        }
         if entering {
-            try await waitUntil("commands in flight to finish before subscribing") { inFlight == 0 }
+            try await waitUntil("commands in flight to finish before subscribing", deadline: deadline) {
+                inFlight == 0
+            }
         }
         try Task.checkCancellation()
+        try checkDeadline(deadline, waitingFor: "its turn")
         if !connection.isConnected {
             subscribedChannels.removeAll()
             subscribedPatterns.removeAll()
         }
         guard let future = change() else { return }
-        try await awaitReply(future)
+        try await awaitReply(future, deadline: deadline)
         // Before the next change takes its turn.
         record()
     }
@@ -466,11 +491,11 @@ public actor RedisClient {
     /// timeout, cancellation or channel closing itself rather than on the future failing,
     /// because RediStack doesn't fail every future (pending subscription changes) when its
     /// channel closes.
-    func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>) async throws -> Value {
+    func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>, deadline: NIODeadline?) async throws -> Value {
         let waiter = ReplyWaiter<Value>()
         let channel = self.channel
         let closeWatchers = self.closeWatchers
-        let timeout = commandTimeout
+        let timeoutDescription = self.timeoutDescription
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard waiter.install(continuation) else { return }
@@ -479,10 +504,11 @@ public actor RedisClient {
                     closeWatchers.remove(watch)
                     waiter.finish($0)
                 }
-                if let timeout {
-                    let timer = future.eventLoop.scheduleTask(in: timeout) {
-                        let ms = timeout.nanoseconds / 1_000_000
-                        waiter.finish(.failure(CommandError("No reply within \(ms) ms; the connection was closed")))
+                if let deadline {
+                    let timer = future.eventLoop.scheduleTask(deadline: deadline) {
+                        waiter.finish(.failure(CommandError(
+                            "No reply within \(timeoutDescription); the connection was closed"
+                        )))
                         channel.close(promise: nil)
                     }
                     future.whenComplete { _ in timer.cancel() }
@@ -507,8 +533,8 @@ public actor RedisClient {
 
     /// Suspends while a `multi(body:)` call that the current task isn't part of is open, so
     /// other callers' commands don't get queued into it.
-    func waitForTransaction() async throws {
-        try await waitUntil("another task's multi(body:) to finish") {
+    func waitForTransaction(deadline: NIODeadline?) async throws {
+        try await waitUntil("another task's multi(body:) to finish", deadline: deadline) {
             transactionOwner == nil || transactionOwner == currentTransaction
         }
     }
@@ -517,7 +543,7 @@ public actor RedisClient {
         if let current = currentTransaction, current == transactionOwner {
             throw CommandError("multi(body:) calls cannot be nested")
         }
-        try await waitForTransaction()
+        try await waitForTransaction(deadline: newDeadline())
         let id = UUID()
         transactionOwner = id
         return id

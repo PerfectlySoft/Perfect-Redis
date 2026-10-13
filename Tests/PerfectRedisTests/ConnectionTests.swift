@@ -230,4 +230,26 @@ import Testing
         #expect(client.closeWatchers.count == 0)
         await server.shutdown()
     }
+
+    /// commandTimeout is one budget for the whole call: waiting behind another task's
+    /// transaction and then for the reply used to get commandTimeout each.
+    @Test func oneDeadlineCoversWaitingAndTheReply() async throws {
+        let server = try await FakeRedisServer([
+            .reply(Array("+OK\r\n".utf8)),  // MULTI
+            .reply(Array("*0\r\n".utf8)),   // EXEC
+            .silence,                         // the GET that waited
+        ])
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 1)
+        let client = try await RedisClient.connect(withIdentifier: id)
+        let transaction = Task { try await client.multi { try await Task.sleep(nanoseconds: 700_000_000) } }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let seconds = await elapsed {
+            _ = await bounded(5, "GET behind the transaction") {
+                try await client.get(key: "k")
+            }
+        }
+        #expect(seconds < 1.4, "Took \(seconds) s with a 1 s commandTimeout")
+        _ = await bounded(5, "transaction") { try await transaction.value }
+        await server.shutdown()
+    }
 }
