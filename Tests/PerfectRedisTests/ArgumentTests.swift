@@ -33,4 +33,35 @@ import Testing
             }
         }
     }
+
+    static let unpairedCommands: [(String, [String])] = [
+        ("HELLO", ["3"]), ("hello", ["3", "AUTH", "u", "p"]), ("HELLO", ["4"]),
+        ("SUBSCRIBE", ["c"]), ("psubscribe", ["p*"]), ("SSUBSCRIBE", ["s"]),
+        ("UNSUBSCRIBE", []), ("PUNSUBSCRIBE", []), ("SUNSUBSCRIBE", []),
+        ("MONITOR", []), ("SYNC", []), ("PSYNC", ["?", "-1"]),
+        ("CLIENT", ["REPLY", "OFF"]), ("client", ["reply", "skip"]), ("CLIENT", ["REPLY"]),
+    ]
+
+    @Test(arguments: unpairedCommands)
+    func commandsThatBreakReplyPairingAreRefused(_ name: String, _ parameters: [String]) async throws {
+        try await withSilentServer { client in
+            await #expect(throws: RedisClient.CommandError.self) {
+                try await client.sendCommandAsRESP(name: name, parameters: parameters)
+            }
+        }
+    }
+
+    static let pairedCommands: [(String, [String])] = [
+        ("HELLO", []), ("HELLO", ["2"]), ("CLIENT", ["REPLY", "ON"]), ("CLIENT", ["ID"]), ("PING", []),
+    ]
+
+    @Test(arguments: pairedCommands)
+    func otherCommandsAreSent(_ name: String, _ parameters: [String]) async throws {
+        let server = try await FakeRedisServer(replies: "+OK\r\n")
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let reply = try await client.sendCommandAsRESP(name: name, parameters: parameters)
+        #expect(reply.isSimpleOK)
+        try? await client.close()
+        await server.shutdown()
+    }
 }

@@ -219,8 +219,38 @@ private func milliseconds(_ seconds: Double) throws -> String {
 // MARK: - sendCommandAsRESP
 
 public extension RedisClient {
+    /// Sends any command, with its name and every parameter as a RESP bulk string.
+    ///
+    /// The connection pairs each command with exactly one RESP2 reply, so this throws
+    /// `CommandError`, without sending anything, for commands that would break that pairing
+    /// and leave later replies matched to the wrong commands: the (P/S)SUBSCRIBE family (use
+    /// `subscribe` and `messages`), MONITOR, SYNC, PSYNC, CLIENT REPLY OFF or SKIP, and HELLO
+    /// asking for any protocol other than 2.
     func sendCommandAsRESP(name: String, parameters: [String]) async throws -> RedisResponse {
-        try await send(name, parameters.map { arg($0) })
+        if let reason = Self.breaksReplyPairing(name: name, parameters: parameters) {
+            throw CommandError("\(name) is not supported through sendCommandAsRESP: \(reason)")
+        }
+        return try await send(name, parameters.map { arg($0) })
+    }
+}
+
+extension RedisClient {
+    static func breaksReplyPairing(name: String, parameters: [String]) -> String? {
+        switch name.uppercased() {
+        case "SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE", "UNSUBSCRIBE", "PUNSUBSCRIBE", "SUNSUBSCRIBE":
+            return "subscription replies arrive unrequested; use subscribe(channels:) or subscribe(patterns:)"
+        case "MONITOR", "SYNC", "PSYNC":
+            return "the server streams replies that no command asked for"
+        case "CLIENT":
+            guard parameters.first?.uppercased() == "REPLY",
+                  parameters.dropFirst().first?.uppercased() != "ON" else { return nil }
+            return "commands whose replies are suppressed would be paired with later replies"
+        case "HELLO":
+            guard let version = parameters.first, version != "2" else { return nil }
+            return "only RESP2 is supported, so HELLO may only ask for protocol 2"
+        default:
+            return nil
+        }
     }
 }
 

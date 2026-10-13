@@ -55,6 +55,19 @@ extension LiveRedisTests {
             }
         }
 
+        @Test func refusedHelloLeavesConnectionUsable() async throws {
+            try await withRedis { client in
+                await #expect(throws: RedisClient.CommandError.self) {
+                    try await client.sendCommandAsRESP(name: "HELLO", parameters: ["3"])
+                }
+                let hello = try await client.sendCommandAsRESP(name: "HELLO", parameters: ["2"])
+                guard case .array = hello else {
+                    Issue.record("Expected HELLO 2 to return an array, got \(hello)"); return
+                }
+                #expect(try await client.ping().string == "PONG")
+            }
+        }
+
         @Test func setGetXX() async throws {
             try await withRedis { client in
                 let (key, value) = ("mykey", "myvalue")
