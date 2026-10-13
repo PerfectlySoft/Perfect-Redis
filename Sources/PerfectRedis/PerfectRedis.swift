@@ -327,7 +327,7 @@ public actor RedisClient {
     /// Enters subscription mode once every command already sent has its reply, so none of
     /// those replies pass through RediStack's pub/sub handler.
     func enterSubscriptionMode() async throws {
-        if let current = Self.currentTransaction, current == transactionOwner {
+        if let current = currentTransaction, current == transactionOwner {
             throw CommandError("subscribe can't be used inside multi(body:)")
         }
         await waitForTransaction()
@@ -384,9 +384,12 @@ public actor RedisClient {
 
     // MARK: Transaction ownership
 
-    /// The `multi(body:)` call the current task is running inside, if any. Child tasks
+    /// The `multi(body:)` calls the current task is running inside, by client. Child tasks
     /// inherit it, so structured concurrency inside the body still reaches the server.
-    @TaskLocal static var currentTransaction: UUID?
+    @TaskLocal static var currentTransactions: [ObjectIdentifier: UUID] = [:]
+
+    /// The `multi(body:)` call on this client that the current task is running inside.
+    private var currentTransaction: UUID? { Self.currentTransactions[ObjectIdentifier(self)] }
     /// The transaction whose MULTI is open on the connection.
     private var transactionOwner: UUID?
     private var transactionWaiters: [CheckedContinuation<Void, Never>] = []
@@ -394,13 +397,13 @@ public actor RedisClient {
     /// Suspends while a `multi(body:)` call that the current task isn't part of is open, so
     /// other callers' commands don't get queued into it.
     func waitForTransaction() async {
-        while let owner = transactionOwner, owner != Self.currentTransaction {
+        while let owner = transactionOwner, owner != currentTransaction {
             await withCheckedContinuation { transactionWaiters.append($0) }
         }
     }
 
     func beginTransaction() async throws -> UUID {
-        if let current = Self.currentTransaction, current == transactionOwner {
+        if let current = currentTransaction, current == transactionOwner {
             throw CommandError("multi(body:) calls cannot be nested")
         }
         await waitForTransaction()
@@ -758,7 +761,9 @@ public extension RedisClient {
     func multi(body: () async throws -> ()) async throws -> RedisResponse {
         let id = try await beginTransaction()
         defer { endTransaction() }
-        return try await Self.$currentTransaction.withValue(id) {
+        var transactions = Self.currentTransactions
+        transactions[ObjectIdentifier(self)] = id
+        return try await Self.$currentTransactions.withValue(transactions) {
             _ = try await multiBegin()
             do {
                 try await body()

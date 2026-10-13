@@ -95,5 +95,35 @@ extension LiveRedisTests {
                 #expect(pong.string == "PONG")
             }
         }
+    
+        /// The transaction marker was one task-local shared by every client, so inside
+        /// b.multi, a's own transaction was no longer recognised and a's command waited for it.
+        @Test func transactionsOnTwoClientsNest() async throws {
+            let a = try await RedisTestEnvironment.connect()
+            let b = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            let task = Task {
+                try await a.multi {
+                    _ = try await b.multi {
+                        _ = try await a.set(key: "from-a", value: .string("1"))
+                        _ = try await b.set(key: "from-b", value: .string("2"))
+                    }
+                }
+            }
+            let watchdog = Task {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await a.close()
+                try? await b.close()
+            }
+            let result = await task.result
+            watchdog.cancel()
+            guard case .success(let exec) = result, case .array(let items) = exec else {
+                Issue.record("a.multi didn't complete: \(result)"); return
+            }
+            #expect(items.count == 1)
+            #expect(try await a.get(key: "from-a").string == "1")
+            #expect(try await a.get(key: "from-b").string == "2")
+            try await a.close()
+            try await b.close()
+        }
     }
 }
