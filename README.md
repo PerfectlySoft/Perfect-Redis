@@ -57,7 +57,7 @@ print(try await client.get(key: "nope").isNil) // true
 try await client.close()
 ```
 
-Connect to another server, with a password and a per-command timeout:
+Connect to another server, with a password and a timeout for each call:
 
 ```swift
 let id = RedisClientIdentifier(withHost: "redis.internal", port: 6379,
@@ -113,7 +113,7 @@ While `multi` runs, commands that other tasks send on the same client wait until
 
 ### Timeouts, cancellation and blocking commands
 
-`commandTimeout` is one budget for each call, covering everything the call waits for: another task's transaction, earlier subscription changes, commands in flight (for `subscribe`), and then the reply. If it runs out before anything is sent, the call throws `CommandError` and the connection stays open; if it runs out while waiting for the reply, the call throws `CommandError` and the connection is closed. It also bounds `connect` from the TCP connection on, including `AUTH` (but not the host name lookup). The default is no timeout. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled, or cancelled while waiting its turn, throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
+`commandTimeout` is one budget for each call, covering everything the call waits for: another task's transaction, earlier subscription changes, commands in flight (for `subscribe`), and then the reply. If it runs out before anything is sent, the call throws `CommandError` and the connection stays open; if it runs out while waiting for the reply, the call throws `CommandError` and the connection is closed. It also bounds `connect` from the TCP connection on, including `AUTH` (but not the host name lookup). The default is no timeout. `multi(body:)` isn't one budget: waiting for another task's transaction, `MULTI`, each command in the body and `EXEC` each get their own. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled, or cancelled while waiting its turn, throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
 
 `close()` gives outstanding replies up to a second, then closes the connection outright. Releasing a client without `close()` closes it immediately.
 
