@@ -195,6 +195,16 @@ public actor RedisClient {
 @inline(__always)
 private func arg(_ s: String) -> RESPValue { RESPValue(from: s) }
 
+/// Seconds as a whole number of milliseconds, the unit the P* commands take. Throws
+/// rather than trapping when the value is NaN, infinite or beyond Int's range.
+private func milliseconds(_ seconds: Double) throws -> String {
+    let ms = (seconds * 1000).rounded(.towardZero)
+    guard ms.isFinite, ms >= Double(Int.min), ms < Double(Int.max) else {
+        throw RedisClient.CommandError("\(seconds) seconds is not a representable number of milliseconds")
+    }
+    return String(Int(ms))
+}
+
 // MARK: - sendCommandAsRESP
 
 public extension RedisClient {
@@ -265,7 +275,7 @@ public extension RedisClient {
         return try await send("CLIENT", args)
     }
     func clientPause(timeoutSeconds: Double) async throws -> RedisResponse {
-        try await send("CLIENT", [arg("PAUSE"), arg(String(Int(timeoutSeconds * 1000)))])
+        try await send("CLIENT", [arg("PAUSE"), arg(try milliseconds(timeoutSeconds))])
     }
 }
 
@@ -278,7 +288,7 @@ public extension RedisClient {
         expires: Double = 0, ifNotExists: Bool = false, ifExists: Bool = false
     ) async throws -> RedisResponse {
         var args: [RESPValue] = [arg(key), value.resp]
-        if expires != 0 { args += [arg("PX"), arg(String(Int(expires * 1000)))] }
+        if expires != 0 { args += [arg("PX"), arg(try milliseconds(expires))] }
         if ifNotExists { args.append(arg("NX")) }
         else if ifExists { args.append(arg("XX")) }
         return try await send("SET", args)
@@ -334,10 +344,10 @@ public extension RedisClient {
     }
 
     func expire(key: String, seconds: Double) async throws -> RedisResponse {
-        try await send("PEXPIRE", [arg(key), arg(String(Int(seconds * 1000)))])
+        try await send("PEXPIRE", [arg(key), arg(try milliseconds(seconds))])
     }
     func expireAt(key: String, seconds: Double) async throws -> RedisResponse {
-        try await send("PEXPIREAT", [arg(key), arg(String(Int(seconds * 1000)))])
+        try await send("PEXPIREAT", [arg(key), arg(try milliseconds(seconds))])
     }
     func timeToExpire(key: String) async throws -> RedisResponse {
         try await send("PTTL", [arg(key)])
