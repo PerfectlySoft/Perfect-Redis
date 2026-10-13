@@ -3,7 +3,7 @@ import Testing
 @testable import PerfectRedis
 
 /// Replies fed from a scripted fake server, so no Redis is needed.
-@Suite struct ReplyTests {
+@Suite(.timeLimit(.minutes(1))) struct ReplyTests {
     /// Connects to a fake server that answers the first request with `reply`, sends PING,
     /// and returns the reply as the client decoded it.
     func decode(_ reply: String) async throws -> RedisResponse {

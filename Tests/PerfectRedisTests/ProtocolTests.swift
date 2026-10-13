@@ -85,7 +85,7 @@ extension LiveRedisTests {
 
         @Test func commandTimeoutCutsOffALongerBlockingCommand() async throws {
             let id = RedisClientIdentifier(
-                withHost: RedisTestEnvironment.host, port: RedisTestEnvironment.port, commandTimeout: 0.5
+                withHost: RedisTestEnvironment.host, port: RedisTestEnvironment.port, commandTimeout: 1
             )
             let client = try await RedisClient.connect(withIdentifier: id)
             await #expect(throws: RedisClient.CommandError.self) {

@@ -3,7 +3,7 @@ import Testing
 @testable import PerfectRedis
 
 /// Connection-level failures, against a scripted fake server.
-@Suite struct ConnectionTests {
+@Suite(.timeLimit(.minutes(1))) struct ConnectionTests {
     func elapsed(_ body: () async throws -> Void) async rethrows -> Double {
         let start = Date()
         try await body()
@@ -12,7 +12,7 @@ import Testing
 
     @Test func unansweredCommandTimesOut() async throws {
         let server = try await FakeRedisServer([.silence, .reply(Array("+PONG\r\n".utf8))])
-        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 0.3)
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 1)
         let client = try await RedisClient.connect(withIdentifier: id)
         let seconds = await elapsed {
             await #expect(throws: RedisClient.CommandError.self) { try await client.ping() }
@@ -25,10 +25,10 @@ import Testing
 
     @Test func answeredCommandsAreUnaffectedByTheTimeout() async throws {
         let server = try await FakeRedisServer(replies: "+PONG\r\n", "+PONG\r\n")
-        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 0.2)
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 1)
         let client = try await RedisClient.connect(withIdentifier: id)
         #expect(try await client.ping().string == "PONG")
-        try await Task.sleep(nanoseconds: 400_000_000)  // past the first command's deadline
+        try await Task.sleep(nanoseconds: 1_500_000_000)  // past the first command's deadline
         #expect(try await client.ping().string == "PONG")
         try await client.close()
         await server.shutdown()
@@ -104,7 +104,7 @@ import Testing
     @Test(arguments: [false, true])
     func messagesEndWhenTheConnectionDrops(byTimeout: Bool) async throws {
         let server = try await FakeRedisServer([byTimeout ? .silence : .close])
-        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: byTimeout ? 0.3 : nil)
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: byTimeout ? 1 : nil)
         let client = try await RedisClient.connect(withIdentifier: id)
         let drained = Task { for await _ in client.messages {}; return true }
         await #expect(throws: (any Error).self) { try await client.ping() }
@@ -122,7 +122,7 @@ import Testing
 
     @Test func subscribeHonoursTheTimeout() async throws {
         let server = try await FakeRedisServer([.silence])
-        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 0.3)
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 1)
         let client = try await RedisClient.connect(withIdentifier: id)
         let seconds = await elapsed {
             await #expect(throws: RedisClient.CommandError.self) { try await client.subscribe(channels: ["c"]) }
@@ -148,7 +148,7 @@ import Testing
     /// AUTH is sent while connecting; a server that never answers it hung connect().
     @Test func connectHonoursTheTimeoutDuringAuth() async throws {
         let server = try await FakeRedisServer([.silence])
-        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, password: "pw", commandTimeout: 0.3)
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, password: "pw", commandTimeout: 1)
         let seconds = await elapsed {
             await #expect(throws: RedisClient.CommandError.self) { try await RedisClient.connect(withIdentifier: id) }
         }

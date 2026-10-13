@@ -3,7 +3,7 @@ import Testing
 @testable import PerfectRedis
 
 /// Arguments the client must reject before anything reaches the server.
-@Suite struct ArgumentTests {
+@Suite(.timeLimit(.minutes(1))) struct ArgumentTests {
     /// A client connected to a fake server that never answers, so any command that was
     /// actually sent would hang rather than pass.
     func withSilentServer(_ body: (RedisClient) async throws -> Void) async throws {

@@ -5,7 +5,7 @@ import Testing
 @testable import PerfectRedis
 
 /// RediStack logs commands' arguments (AUTH's password included) at debug level.
-@Suite struct LoggingTests {
+@Suite(.timeLimit(.minutes(1))) struct LoggingTests {
     /// Collects every record logged through it, whatever the level.
     final class Capture: LogHandler, @unchecked Sendable {
         let lines = NIOLockedValueBox<[String]>([])

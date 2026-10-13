@@ -5,7 +5,7 @@ import Testing
 @testable import PerfectRedis
 
 /// Hostile reply framing must fail the connection, not crash the process.
-@Suite struct ReplyGuardTests {
+@Suite(.timeLimit(.minutes(1))) struct ReplyGuardTests {
     /// Sends PING to a fake server that answers with `reply`, then a second PING.
     func exchange(_ reply: String) async throws -> (first: Result<RedisResponse, Error>, second: Result<RedisResponse, Error>) {
         let server = try await FakeRedisServer(replies: reply, "+PONG\r\n")

@@ -42,7 +42,7 @@ enum RedisTestEnvironment {
 
 /// Live suites skip when they have no server, so a CI misconfiguration would pass silently.
 /// With REDIS_REQUIRE_LIVE=1 (set in CI wherever a server runs) this fails instead.
-struct LiveServerRequirementTests {
+@Suite(.timeLimit(.minutes(1))) struct LiveServerRequirementTests {
     @Test(.enabled(if: RedisTestEnvironment.required))
     func liveServerIsReachableWhenRequired() async throws {
         try #require(RedisTestEnvironment.isEnabled, "REDIS_REQUIRE_LIVE=1 but REDIS_TESTS is not 1")
@@ -58,7 +58,10 @@ struct LiveServerRequirementTests {
 
 /// Every live suite nests in here. They share one server and empty it, so they must not
 /// run in parallel with each other.
-@Suite(.serialized, .enabled(if: RedisTestEnvironment.isEnabled, "Set REDIS_TESTS=1 to run against a server"))
+@Suite(
+    .serialized, .timeLimit(.minutes(1)),
+    .enabled(if: RedisTestEnvironment.isEnabled, "Set REDIS_TESTS=1 to run against a server")
+)
 enum LiveRedisTests {}
 
 /// Runs `body`, but stops waiting after `seconds`: returns its result, or nil after
