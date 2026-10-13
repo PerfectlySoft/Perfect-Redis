@@ -202,4 +202,32 @@ import Testing
         }
         await server.shutdown()
     }
+
+    /// Each command used to register its own closeFuture callback, which NIO keeps until the
+    /// connection closes: about 200 bytes per command, for the life of the client. Waits now
+    /// share one callback and deregister when they end.
+    @Test func finishedCommandsLeaveNoCloseWatchers() async throws {
+        let server = try await FakeRedisServer((0..<2_000).map { _ in .reply(Array("+PONG\r\n".utf8)) })
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        for _ in 0..<2_000 { _ = try await client.ping() }
+        #expect(client.closeWatchers.count == 0)
+        try await client.close()
+        await server.shutdown()
+    }
+
+    @Test func aWaitInProgressIsWatchedUntilTheConnectionCloses() async throws {
+        let server = try await FakeRedisServer([.silence])
+        let client = try await RedisClient.connect(withIdentifier: server.identifier)
+        let pending = Task { try await client.ping() }
+        var waited = 0
+        while client.closeWatchers.count == 0, waited < 50 {
+            try await Task.sleep(nanoseconds: 20_000_000)
+            waited += 1
+        }
+        #expect(client.closeWatchers.count == 1)
+        try await client.close()
+        _ = await bounded(5, "pending ping after close") { try await pending.value }
+        #expect(client.closeWatchers.count == 0)
+        await server.shutdown()
+    }
 }

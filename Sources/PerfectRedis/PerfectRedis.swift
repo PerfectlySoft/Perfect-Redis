@@ -276,9 +276,19 @@ public actor RedisClient {
         let (stream, sink) = AsyncStream.makeStream(of: PublishedMessage.self)
         (messages, messageSink) = (stream, sink)
         // However the connection ends (close(), a timeout, the server dropping it), so does
-        // the stream.
-        channel.closeFuture.whenComplete { _ in sink.finish() }
+        // the stream, and so does every wait for a reply. One callback for the connection's
+        // lifetime: NIO keeps closeFuture callbacks until the channel closes, so registering
+        // one per command grew memory with every command.
+        let closeWatchers = self.closeWatchers
+        channel.closeFuture.whenComplete { _ in
+            sink.finish()
+            closeWatchers.closeAll()
+        }
     }
+
+    /// Waits to end when the connection closes. RediStack doesn't fail pending subscription
+    /// changes when its channel closes.
+    nonisolated let closeWatchers = CloseWatchers()
 
     /// A client released without close() closes its connection outright; replies still
     /// outstanding are lost. Prefer close(), which gives them a moment to arrive.
@@ -459,13 +469,16 @@ public actor RedisClient {
     func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>) async throws -> Value {
         let waiter = ReplyWaiter<Value>()
         let channel = self.channel
+        let closeWatchers = self.closeWatchers
         let timeout = commandTimeout
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard waiter.install(continuation) else { return }
-                future.whenComplete { waiter.finish($0) }
-                // RediStack doesn't fail pending subscription changes when the channel closes.
-                channel.closeFuture.whenComplete { _ in waiter.finish(.failure(RedisClientError.connectionClosed)) }
+                let watch = closeWatchers.add { waiter.finish(.failure(RedisClientError.connectionClosed)) }
+                future.whenComplete {
+                    closeWatchers.remove(watch)
+                    waiter.finish($0)
+                }
                 if let timeout {
                     let timer = future.eventLoop.scheduleTask(in: timeout) {
                         let ms = timeout.nanoseconds / 1_000_000
@@ -1142,4 +1155,42 @@ final class ReplyWaiter<Value: Sendable>: Sendable {
         }
         continuation?.resume(with: result)
     }
+}
+
+/// Callbacks to run once when the connection closes, each removed again when its wait ends
+/// some other way, so the set holds only waits still in progress.
+final class CloseWatchers: Sendable {
+    private struct State {
+        var closed = false
+        var watchers: [UUID: @Sendable () -> Void] = [:]
+    }
+    private let state = NIOLockedValueBox(State())
+
+    /// Registers `onClose`, or runs it at once if the connection has already closed.
+    func add(_ onClose: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        let alreadyClosed = state.withLockedValue { state -> Bool in
+            guard !state.closed else { return true }
+            state.watchers[id] = onClose
+            return false
+        }
+        if alreadyClosed { onClose() }
+        return id
+    }
+
+    func remove(_ id: UUID) {
+        state.withLockedValue { _ = $0.watchers.removeValue(forKey: id) }
+    }
+
+    func closeAll() {
+        let watchers = state.withLockedValue { state -> [@Sendable () -> Void] in
+            state.closed = true
+            defer { state.watchers.removeAll() }
+            return Array(state.watchers.values)
+        }
+        for watcher in watchers { watcher() }
+    }
+
+    /// Waits currently registered.
+    var count: Int { state.withLockedValue { $0.watchers.count } }
 }
