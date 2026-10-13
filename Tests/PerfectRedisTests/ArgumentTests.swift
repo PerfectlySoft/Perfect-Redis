@@ -40,6 +40,7 @@ import Testing
         ("UNSUBSCRIBE", []), ("PUNSUBSCRIBE", []), ("SUNSUBSCRIBE", []),
         ("MONITOR", []), ("SYNC", []), ("PSYNC", ["?", "-1"]),
         ("CLIENT", ["REPLY", "OFF"]), ("client", ["reply", "skip"]), ("CLIENT", ["REPLY"]),
+        ("RESET", []), ("reset", []),
     ]
 
     @Test(arguments: unpairedCommands)

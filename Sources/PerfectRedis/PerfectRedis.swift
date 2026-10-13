@@ -244,8 +244,63 @@ public actor RedisClient {
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
         await waitForTransaction()
+        guard !subscriptionMode else {
+            throw CommandError(
+                "\(command) can't be sent while this client has subscriptions; use another client, or unsubscribe from everything first"
+            )
+        }
+        inFlight += 1
+        defer { commandFinished() }
         let result = try await reply(to: connection.send(command: command, with: args))
         return RedisResponse(result)
+    }
+
+    // MARK: Subscription mode
+
+    /// Commands sent whose replies haven't arrived.
+    private var inFlight = 0
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    /// From the start of the first subscribe until the last subscription ends. Ordinary
+    /// commands are refused meanwhile: RediStack's pub/sub handler inspects every reply, so a
+    /// reply shaped like a subscription message (ordinary data can be) would be misread.
+    private var subscriptionMode = false
+
+    private func commandFinished() {
+        inFlight -= 1
+        guard inFlight == 0 else { return }
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    /// Enters subscription mode once every command already sent has its reply, so none of
+    /// those replies pass through RediStack's pub/sub handler.
+    func enterSubscriptionMode() async throws {
+        if let current = Self.currentTransaction, current == transactionOwner {
+            throw CommandError("subscribe can't be used inside multi(body:)")
+        }
+        await waitForTransaction()
+        subscriptionMode = true
+        while inFlight > 0 {
+            await withCheckedContinuation { idleWaiters.append($0) }
+        }
+    }
+
+    private var pendingSubscriptionChanges = 0
+
+    func changeSubscriptions(entering: Bool, _ change: () -> EventLoopFuture<Void>) async throws {
+        if entering {
+            try await enterSubscriptionMode()
+        } else {
+            await waitForTransaction()
+        }
+        pendingSubscriptionChanges += 1
+        defer {
+            pendingSubscriptionChanges -= 1
+            // Leave subscription mode once RediStack has no subscriptions left.
+            subscriptionMode = connection.isSubscribed || pendingSubscriptionChanges > 0
+        }
+        try await change().get()
     }
 
     private enum Interruption { case timedOut, cancelled }
@@ -340,8 +395,8 @@ public extension RedisClient {
     /// The connection pairs each command with exactly one RESP2 reply, so this throws
     /// `CommandError`, without sending anything, for commands that would break that pairing
     /// and leave later replies matched to the wrong commands: the (P/S)SUBSCRIBE family (use
-    /// `subscribe` and `messages`), MONITOR, SYNC, PSYNC, CLIENT REPLY OFF or SKIP, and HELLO
-    /// asking for any protocol other than 2.
+    /// `subscribe` and `messages`), MONITOR, SYNC, PSYNC, CLIENT REPLY OFF or SKIP, HELLO
+    /// asking for any protocol other than 2, and RESET.
     func sendCommandAsRESP(name: String, parameters: [String]) async throws -> RedisResponse {
         if let reason = Self.breaksReplyPairing(name: name, parameters: parameters) {
             throw CommandError("\(name) is not supported through sendCommandAsRESP: \(reason)")
@@ -357,6 +412,8 @@ extension RedisClient {
             return "subscription replies arrive unrequested; use subscribe(channels:) or subscribe(patterns:)"
         case "MONITOR", "SYNC", "PSYNC":
             return "the server streams replies that no command asked for"
+        case "RESET":
+            return "it silently ends subscriptions and transactions the client is tracking; use close() and reconnect"
         case "CLIENT":
             guard parameters.first?.uppercased() == "REPLY",
                   parameters.dropFirst().first?.uppercased() != "ON" else { return nil }
@@ -683,50 +740,54 @@ public extension RedisClient {
 
     /// Subscribes to channels matching each glob-style pattern. Messages arrive on `messages`.
     ///
-    /// While any subscription is active, Redis accepts only subscription commands, PING,
-    /// QUIT and RESET on this connection; use another client for everything else.
+    /// Commands this client has already sent finish first. From then until the last
+    /// subscription ends, the client refuses every other command with `CommandError`, so
+    /// publish and do other work from a second client.
     func subscribe(patterns: [String]) async throws {
         guard !patterns.isEmpty else { throw CommandError("subscribe(patterns:) needs at least one pattern") }
-        await waitForTransaction()
         let sink = messageSink
-        try await connection.psubscribe(
-            to: patterns,
-            messageReceiver: { channel, value in
-                sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
-            },
-            onSubscribe: nil,
-            onUnsubscribe: nil
-        ).get()
+        try await changeSubscriptions(entering: true) {
+            connection.psubscribe(
+                to: patterns,
+                messageReceiver: { channel, value in
+                    sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+                },
+                onSubscribe: nil,
+                onUnsubscribe: nil
+            )
+        }
     }
 
     /// Subscribes to channels. Messages arrive on `messages`.
     ///
-    /// While any subscription is active, Redis accepts only subscription commands, PING,
-    /// QUIT and RESET on this connection; use another client for everything else.
+    /// Commands this client has already sent finish first. From then until the last
+    /// subscription ends, the client refuses every other command with `CommandError`, so
+    /// publish and do other work from a second client.
     func subscribe(channels: [String]) async throws {
         guard !channels.isEmpty else { throw CommandError("subscribe(channels:) needs at least one channel") }
-        await waitForTransaction()
         let sink = messageSink
-        try await connection.subscribe(
-            to: channels.map { RedisChannelName($0) },
-            messageReceiver: { channel, value in
-                sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
-            },
-            onSubscribe: nil,
-            onUnsubscribe: nil
-        ).get()
+        try await changeSubscriptions(entering: true) {
+            connection.subscribe(
+                to: channels.map { RedisChannelName($0) },
+                messageReceiver: { channel, value in
+                    sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+                },
+                onSubscribe: nil,
+                onUnsubscribe: nil
+            )
+        }
     }
 
     /// Unsubscribes from the given patterns, or from every pattern when the list is empty.
     func unsubscribe(patterns: [String]) async throws {
-        await waitForTransaction()
-        try await connection.punsubscribe(from: patterns).get()
+        try await changeSubscriptions(entering: false) { connection.punsubscribe(from: patterns) }
     }
 
     /// Unsubscribes from the given channels, or from every channel when the list is empty.
     func unsubscribe(channels: [String]) async throws {
-        await waitForTransaction()
-        try await connection.unsubscribe(from: channels.map { RedisChannelName($0) }).get()
+        try await changeSubscriptions(entering: false) {
+            connection.unsubscribe(from: channels.map { RedisChannelName($0) })
+        }
     }
     func publish(channel: String, message: RedisValue) async throws -> RedisResponse {
         try await send("PUBLISH", [arg(channel), message.resp])

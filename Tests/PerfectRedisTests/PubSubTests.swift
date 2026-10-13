@@ -74,6 +74,54 @@ extension LiveRedisTests {
             #expect(await drained.value)
         }
 
+        /// A reply to a command sent before subscribing must not reach RediStack's pub/sub
+        /// handler: one shaped like a subscription confirmation crashed the process, and one
+        /// shaped like a message was delivered as a forged message while its caller hung.
+        @Test(arguments: ["{'subscribe','x','y'}", "{'message','c','forged'}"])
+        func subscribeWaitsForCommandsAlreadySent(_ result: String) async throws {
+            let client = try await RedisTestEnvironment.connect()
+            let script = "local i=0 while i<20000000 do i=i+1 end return \(result)"
+            let slow = Task { try await client.sendCommandAsRESP(name: "EVAL", parameters: [script, "0"]) }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try await client.subscribe(channels: ["c"])
+            let reply = try await slow.value
+            guard case .array(let items) = reply else {
+                Issue.record("Expected the script's array, got \(reply)"); return
+            }
+            #expect(items.count == 3)
+
+            let publisher = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            _ = try await publisher.publish(channel: "c", message: .string("real"))
+            var iterator = client.messages.makeAsyncIterator()
+            let first = await iterator.next()
+            #expect(first?.message.string == "real")
+            try await publisher.close()
+            try await client.close()
+        }
+
+        @Test func subscribedClientRefusesOrdinaryCommandsUntilFullyUnsubscribed() async throws {
+            let client = try await RedisTestEnvironment.connect()
+            try await client.subscribe(channels: ["a"])
+            try await client.subscribe(patterns: ["p*"])
+            await #expect(throws: RedisClient.CommandError.self) { try await client.get(key: "k") }
+            try await client.unsubscribe(channels: [])
+            await #expect(throws: RedisClient.CommandError.self) { try await client.ping() }
+            try await client.unsubscribe(patterns: [])
+            let pong = try await client.ping()
+            #expect(pong.string == "PONG")
+            try await client.close()
+        }
+
+        @Test func subscribeInsideMultiIsRefused() async throws {
+            let client = try await RedisTestEnvironment.connect()
+            await #expect(throws: RedisClient.CommandError.self) {
+                _ = try await client.multi { try await client.subscribe(channels: ["a"]) }
+            }
+            let pong = try await client.ping()
+            #expect(pong.string == "PONG")
+            try await client.close()
+        }
+
         @Test func emptySubscriptionListIsRejected() async throws {
             let client = try await RedisTestEnvironment.connect()
             await #expect(throws: RedisClient.CommandError.self) { try await client.subscribe(channels: []) }
