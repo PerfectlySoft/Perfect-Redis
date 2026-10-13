@@ -21,7 +21,7 @@ An async/await Redis client for Perfect, built on [swift-server/RediStack](https
 - Swift 6.2 or newer (`swift-tools-version: 6.2`, Swift 6 language mode).
 - macOS 12+, iOS 17+, or Linux. CI builds and tests on Ubuntu 24.04 with Swift 6.2 and 6.4, macOS with Xcode 26.0.1 and 26.6, and the iOS Simulator.
 - A Redis server that speaks RESP2. The live tests run against Redis 7.
-- One external dependency, RediStack (`from: "1.6.0"`), which brings in SwiftNIO; SwiftPM resolves both.
+- RediStack (`from: "1.6.0"`), plus SwiftNIO and swift-log, which RediStack also uses; SwiftPM resolves them all.
 
 ## Installation
 
@@ -69,9 +69,12 @@ Replies come back as `RedisResponse`: `.simpleString`, `.bulkString([UInt8]?)` (
 
 ### Errors
 
+Errors from the server and the connection are RediStack's own types, passed through unwrapped:
+
 - An error reply to a command (such as `WRONGTYPE`) is thrown as RediStack's `RedisError`, whose `message` starts with `(Redis) `.
-- Problems the client catches itself are thrown as `RedisClient.CommandError`: arguments it can't send (a non-finite duration, say), commands `sendCommandAsRESP` refuses, a reply with impossible framing, or a `commandTimeout` running out.
-- A closed or dropped connection makes commands throw RediStack's `RedisClientError.connectionClosed`. A client doesn't reconnect; connect a new one.
+- A closed or dropped connection makes commands throw RediStack's `RedisClientError` (`.connectionClosed`). A client doesn't reconnect; connect a new one.
+
+Problems the client catches itself are thrown as `RedisClient.CommandError`: arguments it can't send (a non-finite duration, say), commands `sendCommandAsRESP` refuses, commands sent while the client has subscriptions, a reply with impossible framing, or a `commandTimeout` running out.
 
 ### Pub/sub
 
@@ -93,7 +96,7 @@ Task {
 _ = try await publisher.publish(channel: "news", message: .string("Hello!"))
 ```
 
-While a client has subscriptions, Redis only accepts subscription commands, `PING`, `QUIT` and `RESET` on it, so publish and run other commands from a second client. `unsubscribe(channels: [])` and `unsubscribe(patterns: [])` drop every subscription. The stream ends when the client is closed.
+`subscribe` first waits for commands the client has already sent to get their replies. From then until its last subscription ends, the client throws `CommandError` for every other command, so publish and run other commands from a second client. `unsubscribe(channels: [])` and `unsubscribe(patterns: [])` drop every subscription. The stream ends when the connection closes for any reason: `close()`, a timeout, a cancellation, or the server dropping it.
 
 ### Transactions
 
@@ -104,22 +107,27 @@ let results = try await client.multi {
 }   // .array([.simpleString("OK"), .integer(2)])
 ```
 
-While `multi` runs, commands that other tasks send on the same client wait until `EXEC` or `DISCARD`, so they aren't queued into the transaction. If the body throws, the transaction is discarded and the error rethrown. `multiBegin()`, `multiExec()` and `multiDiscard()` are also available, but called by hand they have no such protection.
+While `multi` runs, commands that other tasks send on the same client wait until `EXEC` or `DISCARD`, so they aren't queued into the transaction. If the body throws, the transaction is discarded and the error rethrown. Commands from the body's child tasks are part of the transaction; a task started outside it (or detached) that the body waits for will deadlock. `multiBegin()`, `multiExec()` and `multiDiscard()` are also available, but called by hand they have no such protection.
 
 ### Timeouts, cancellation and blocking commands
 
-With `commandTimeout` set, a command that gets no reply in time throws `CommandError` and the connection is closed. The default is no timeout. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command.
+With `commandTimeout` set, a command (or `subscribe`/`unsubscribe`) that gets no reply in time throws `CommandError` and the connection is closed. It also bounds `connect`, including `AUTH`. The default is no timeout. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
+
+`close()` gives outstanding replies up to a second, then closes the connection outright. Releasing a client without `close()` closes it immediately.
 
 Commands share one connection and are pipelined in order, so a blocking command such as `listPopFirstBlocking(keys:timeout:)` holds up everything sent after it on the same client. Give blocking commands their own client, and keep their server-side timeout shorter than `commandTimeout`.
 
 ## Limitations
 
-- **RESP2 only.** `sendCommandAsRESP` refuses `HELLO` with any protocol version except 2. It also refuses commands that would break the one-reply-per-command pairing: the `SUBSCRIBE` family (use `subscribe`), `MONITOR`, `SYNC`, `PSYNC`, and `CLIENT REPLY OFF`/`SKIP`.
+- **RESP2 only.** `sendCommandAsRESP` refuses `HELLO` with any protocol version except 2. It also refuses commands that would break the one-reply-per-command pairing or the client's own bookkeeping: the `SUBSCRIBE` family (use `subscribe`), `MONITOR`, `SYNC`, `PSYNC`, `CLIENT REPLY OFF`/`SKIP`, and `RESET`.
 - **No TLS.** The connection is plain TCP. Use a TLS proxy or tunnel to reach a TLS-only server.
 - **Password only.** `AUTH` is sent with the password alone, so it authenticates as the `default` ACL user; there is no username option.
 - **No reconnection or pooling.** Each `RedisClient` is one connection.
-- **Logging.** RediStack logs through swift-log under the label `RediStack.RedisConnection`. With the default handler, every failed command prints an `error` line; at `debug` level, every command and its arguments are logged, including `AUTH` and its password.
-- **RediStack is deprecated upstream**: its maintainers point new users to valkey-swift. RediStack 1.6 still builds and works on Swift 6.2 and 6.4.
+- **RediStack is deprecated upstream**: its maintainers point new users to valkey-swift. RediStack 1.6 still builds and works on Swift 6.2 and 6.4, and this release stays on it.
+
+## Logging
+
+By default the client gives RediStack a logger that discards everything. To see RediStack's logs, pass a `Logger` (from swift-log) as `RedisClientIdentifier(…, logger:)`. Be careful with its level: at `debug`, RediStack logs every command with its arguments, including the password sent with `AUTH`, and every reply; at `error`, every failed command.
 
 ## Running the tests
 
@@ -145,8 +153,11 @@ REDIS_TESTS=1 REDIS_HOST=redis.test REDIS_PORT=6380 REDIS_REQUIRE_LIVE=1 swift t
 - `readPublished(timeoutSeconds:callback:)` → `for await message in client.messages`. `subscribe` and `unsubscribe` now return nothing.
 - `netTimeout` → `RedisClientIdentifier(…, commandTimeout:)`. `RedisClientIdentifier`'s `netGenerator` is gone.
 - `clientReply(type:)` is removed. Turning replies off would break reply pairing.
+- `RedisHash`, `RedisList` and `RedisSet` lost their collection-style API (`init(_:name:)`, subscripts, iteration, and the `exists`, `count`, `keys` and `values` properties), as did `client.hash(named:)`, `client.list(named:)` and `client.set(named:)`. They're now `init(client:key:)` with async methods named after the commands, such as `get(field:)`, `append(_:)` and `members()`.
+- `RedisClientIdentifier.client()`, `RedisClient.init(net:)` and `sendRawCommand(bytes:)` are gone; use `RedisClient.connect(withIdentifier:)` and `sendCommandAsRESP`.
+- `RedisResponse.toString()` and `RedisValue.toString()` → the `string` property. `RedisValue.commandString` is gone.
 - `[UInt8]` is a `RedisValueRepresentable`; other `ROctal` arrays aren't.
-- `RedisClient` is an `actor`, so share one client between tasks freely. Commands from different tasks are pipelined on its single connection.
+- `RedisClient` is an `actor`, and one client can be shared between tasks: commands from different tasks are pipelined on its single connection. A subscribed client refuses other commands, `multi` makes other tasks wait, and a timeout or cancellation closes the connection for every task using it, so give subscriptions, blocking commands and cancellable work their own clients.
 
 ## Legacy
 
