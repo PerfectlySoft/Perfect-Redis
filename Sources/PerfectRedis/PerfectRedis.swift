@@ -1,5 +1,8 @@
 import Foundation
-import RediStack
+// RediStack 1.6 predates Sendable annotations. RESPValue is a value enum over ByteBuffer,
+// and RedisConnection hops every call onto its event loop, so both are safe to pass between
+// tasks; the actor below is the only holder of the connection.
+@preconcurrency import RediStack
 import NIOCore
 import NIOPosix
 
