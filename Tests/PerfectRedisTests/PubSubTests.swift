@@ -170,9 +170,17 @@ extension LiveRedisTests {
             let s = await bounded(4, "subscribe y") { try await subscribe.value }
             if case .failure(let error)? = u { Issue.record("unsubscribe failed: \(error)") }
             if case .failure(let error)? = s { Issue.record("subscribe failed: \(error)") }
-            // They ran in order, so the client ends subscribed to y only.
-            #expect(try await publisher.publish(channel: "y", message: .string("m")).integer == 1)
+            // They ran one after the other, in whichever order the tasks started, so the
+            // client's view must match the server's: subscribed to y exactly when it still
+            // refuses ordinary commands, and never still subscribed to x.
+            let yCount = try await publisher.publish(channel: "y", message: .string("m")).integer
             #expect(try await publisher.publish(channel: "x", message: .string("m")).integer == 0)
+            let ping = await bounded(3, "PING afterwards") { try await client.ping() }
+            if yCount == 1 {
+                if case .success(let reply)? = ping { Issue.record("Subscribed to y, but PING went out: \(reply)") }
+            } else if case .failure(let error)? = ping {
+                Issue.record("Fully unsubscribed, but PING failed: \(error)")
+            }
             try? await client.close()
             try await publisher.close()
         }
@@ -220,6 +228,27 @@ extension LiveRedisTests {
                 Issue.record("\(scenario): \(error)")
             }
             try? await client.close()
+        }
+
+        /// RediStack drops a refused SUBSCRIBE's error reply (an ACL NOPERM), so only
+        /// commandTimeout ends the wait; the README says so.
+        @Test func subscriptionRefusedByACLEndsAtTheTimeout() async throws {
+            let admin = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            _ = try await admin.sendCommandAsRESP(name: "ACL", parameters: ["SETUSER", "default", "resetchannels", "&ok*"])
+            let id = RedisClientIdentifier(
+                withHost: RedisTestEnvironment.host, port: RedisTestEnvironment.port, commandTimeout: 1
+            )
+            let outcome = await bounded(4, "denied subscribe") {
+                let client = try await RedisClient.connect(withIdentifier: id)
+                defer { Task { try? await client.close() } }
+                try await client.subscribe(channels: ["denied"])
+            }
+            _ = try await admin.sendCommandAsRESP(name: "ACL", parameters: ["SETUSER", "default", "allchannels"])
+            try await admin.close()
+            if case .success? = outcome { Issue.record("A denied subscribe succeeded") }
+            if case .failure(let error)? = outcome {
+                #expect(error is RedisClient.CommandError, "\(error)")
+            }
         }
 
         @Test func emptySubscriptionListIsRejected() async throws {
