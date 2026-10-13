@@ -169,9 +169,20 @@ public actor RedisClient {
         let address = try SocketAddress.makeAddressResolvingHost(id.host, port: id.port)
         let password: String? = id.password.isEmpty ? nil : id.password
         let config = try RedisConnection.Configuration(address: address, password: password)
+        // RediStack's own pipeline, with RESPReplyGuard in front of its reply decoder.
+        let bootstrap = ClientBootstrap(group: eventLoop)
+            .channelOption(.socketOption(.so_reuseaddr), value: 1)
+            .channelInitializer { channel in
+                channel.pipeline.addBaseRedisHandlers().flatMapThrowing {
+                    try channel.pipeline.syncOperations.addHandler(
+                        RESPReplyGuard(), name: "PerfectRedis.ReplyGuard", position: .first
+                    )
+                }
+            }
         let connection = try await RedisConnection.make(
             configuration: config,
-            boundEventLoop: eventLoop
+            boundEventLoop: eventLoop,
+            configuredTCPClient: bootstrap
         ).get()
         return RedisClient(connection: connection)
     }
