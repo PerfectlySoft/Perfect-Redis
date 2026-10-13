@@ -252,4 +252,34 @@ import Testing
         _ = await bounded(5, "transaction") { try await transaction.value }
         await server.shutdown()
     }
+
+    /// Each internal wait scheduled a deadline timer that was never cancelled, and the timer
+    /// held the client until it fired, so a client released after waiting stayed connected
+    /// for up to commandTimeout.
+    @Test func finishedWaitsDontKeepTheClientAlive() async throws {
+        let server = try await FakeRedisServer([
+            .reply(Array("+OK\r\n".utf8)),     // MULTI
+            .reply(Array("*0\r\n".utf8)),      // EXEC
+            .reply(Array("$1\r\nv\r\n".utf8)), // the GET that waited
+        ])
+        let id = RedisClientIdentifier(withHost: "127.0.0.1", port: server.port, commandTimeout: 30)
+        // Everything that touches the client happens in here, so nothing in this test holds
+        // it afterwards.
+        func waitBehindATransaction() async throws {
+            let client = try await RedisClient.connect(withIdentifier: id)
+            let transaction = Task { try await client.multi { try await Task.sleep(nanoseconds: 300_000_000) } }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let get = try await client.get(key: "k")
+            #expect(get.string == "v")
+            _ = try await transaction.value
+        }
+        try await waitBehindATransaction()
+        var waited = 0
+        while server.closedConnections == 0, waited < 30 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            waited += 1
+        }
+        #expect(server.closedConnections == 1, "The released client stayed connected")
+        await server.shutdown()
+    }
 }

@@ -367,7 +367,18 @@ public actor RedisClient {
 
     // MARK: Waiting for the client's state
 
-    private var stateWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private struct StateWaiter {
+        let continuation: CheckedContinuation<Void, Never>
+        /// Wakes the waiter at its deadline; cancelled when it wakes for another reason.
+        let timer: Scheduled<Void>?
+
+        func resume() {
+            timer?.cancel()
+            continuation.resume()
+        }
+    }
+
+    private var stateWaiters: [UUID: StateWaiter] = [:]
 
     /// Suspends until `condition` holds, re-checking it whenever the client's state changes.
     /// Throws CancellationError if the task is cancelled, and CommandError once the call's
@@ -390,10 +401,13 @@ public actor RedisClient {
     /// Suspends until `wake(id)`, a state change, or `deadline`.
     private func park(_ id: UUID, until deadline: NIODeadline?) async {
         await withCheckedContinuation { continuation in
-            stateWaiters[id] = continuation
-            if let deadline {
-                channel.eventLoop.scheduleTask(deadline: deadline) { Task { await self.wake(id) } }
+            // Weak, so a pending timer never keeps a released client (and its socket) alive.
+            let timer = deadline.map { deadline in
+                channel.eventLoop.scheduleTask(deadline: deadline) { [weak self] () -> Void in
+                    Task { await self?.wake(id) }
+                }
             }
+            stateWaiters[id] = StateWaiter(continuation: continuation, timer: timer)
         }
     }
 
