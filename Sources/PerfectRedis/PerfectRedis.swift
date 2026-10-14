@@ -1,7 +1,12 @@
 import Foundation
-import RediStack
+// RediStack 1.6 predates Sendable annotations. RESPValue is a value enum over ByteBuffer,
+// and RedisConnection hops every call onto its event loop, so both are safe to pass between
+// tasks; the actor below is the only holder of the connection.
+@preconcurrency import RediStack
 import NIOCore
 import NIOPosix
+import NIOConcurrencyHelpers
+import Logging
 
 public let redisDefaultPort = 6379
 
@@ -55,26 +60,33 @@ public enum RedisResponse: Sendable {
 
 // MARK: - RESPValue → RedisResponse
 
+private let redisErrorPrefix = "(Redis) "
+
 extension RedisResponse {
     init(_ value: RESPValue) {
         switch value {
         case .simpleString:
             self = .simpleString(value.string ?? "")
         case .bulkString(let buf):
+            // RediStack decodes an empty bulk string ("$0") as .bulkString(nil) and a null
+            // one ("$-1") as .null, so nil here is an empty value, not a missing one.
             if let buf {
-                self = .bulkString(buf.getBytes(at: buf.readerIndex, length: buf.readableBytes))
+                self = .bulkString(buf.getBytes(at: buf.readerIndex, length: buf.readableBytes) ?? [])
             } else {
-                self = .bulkString(nil)
+                self = .bulkString([])
             }
         case .integer(let i):
             self = .integer(i)
         case .array(let arr):
             self = .array(arr.map { RedisResponse($0) })
         case .error(let e):
-            let parts = e.message.split(separator: " ", maxSplits: 1)
+            // RedisError prefixes the server's text with "(Redis) ".
+            var text = Substring(e.message)
+            if text.hasPrefix(redisErrorPrefix) { text = text.dropFirst(redisErrorPrefix.count) }
+            let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
             self = .error(
-                type: parts.first.map(String.init) ?? "ERR",
-                msg: parts.dropFirst().first.map(String.init) ?? e.message
+                type: parts.first.map(String.init).flatMap { $0.isEmpty ? nil : $0 } ?? "ERR",
+                msg: parts.dropFirst().first.map(String.init) ?? ""
             )
         case .null:
             self = .bulkString(nil)
@@ -88,17 +100,45 @@ public struct RedisClientIdentifier: Sendable {
     public let host: String
     public let port: Int
     public let password: String
+    /// Seconds each call may take, or nil (the default) to wait indefinitely. It is one budget
+    /// for the whole call: waiting behind another task's transaction, behind earlier
+    /// subscription changes, or (for subscribe) for commands in flight, and then for the
+    /// reply. If it runs out while waiting, nothing has been sent and the call throws
+    /// `CommandError`; if it runs out while waiting for the reply, the connection is closed
+    /// too. It also bounds blocking commands such as BLPOP, so give those a server-side
+    /// timeout shorter than this, and connecting (from the TCP connection on, including
+    /// AUTH, but not the host name lookup).
+    public let commandTimeout: Double?
+    /// Where RediStack logs this connection's activity, or nil (the default) for nowhere.
+    ///
+    /// RediStack logs every command with its arguments at `debug` level (including the
+    /// password sent with AUTH, and every value), every reply at `debug`, and every failed
+    /// command at `error`. Pass a logger only where that is acceptable, and keep its level
+    /// above `debug` in production.
+    public let logger: Logger?
 
     public init() {
         host = "127.0.0.1"
         port = redisDefaultPort
         password = ""
+        commandTimeout = nil
+        logger = nil
     }
 
-    public init(withHost host: String, port: Int, password: String = "") {
+    public init(
+        withHost host: String, port: Int, password: String = "",
+        commandTimeout: Double? = nil, logger: Logger? = nil
+    ) {
         self.host = host
         self.port = port
         self.password = password
+        self.commandTimeout = commandTimeout
+        self.logger = logger
+    }
+
+    /// The logger handed to RediStack.
+    var connectionLogger: Logger {
+        logger ?? Logger(label: "PerfectRedis", factory: { _ in SwiftLogNoOpLogHandler() })
     }
 }
 
@@ -112,11 +152,13 @@ extension String: RedisValueRepresentable {
     public var redisValue: RedisClient.RedisValue { .string(self) }
 }
 
+/// Kept for source compatibility. Only `[UInt8]` is `RedisValueRepresentable`; conforming
+/// another type to `ROctal` no longer makes its arrays representable.
 public protocol ROctal: Sendable {}
 extension UInt8: ROctal {}
 
-extension Array: RedisValueRepresentable where Element: ROctal {
-    public var redisValue: RedisClient.RedisValue { .binary(self as! [UInt8]) }
+extension Array: RedisValueRepresentable where Element == UInt8 {
+    public var redisValue: RedisClient.RedisValue { .binary(self) }
 }
 
 // MARK: - RedisClient
@@ -151,33 +193,381 @@ public actor RedisClient {
     }
 
     private let connection: RedisConnection
+    /// The connection's channel, for closing it outright: RediStack's own close() waits for
+    /// outstanding replies, which never come from a server that has stopped answering.
+    private nonisolated let channel: Channel
+    private let commandTimeout: TimeAmount?
+
+    /// Messages published to the channels and patterns this client subscribes to, in arrival
+    /// order. The stream is unbounded and ends when the connection closes for any reason.
+    /// It is shared by every subscription on this client, so iterate it from one task.
+    public nonisolated let messages: AsyncStream<PublishedMessage>
+    private nonisolated let messageSink: AsyncStream<PublishedMessage>.Continuation
 
     public static func connect(
         withIdentifier id: RedisClientIdentifier = RedisClientIdentifier()
     ) async throws -> RedisClient {
+        var commandTimeout: TimeAmount?
+        if let seconds = id.commandTimeout {
+            guard seconds.isFinite, seconds > 0, seconds < 1e9 else {
+                throw CommandError("commandTimeout must be a positive number of seconds, not \(seconds)")
+            }
+            commandTimeout = .nanoseconds(Int64(seconds * 1e9))
+        }
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let address = try SocketAddress.makeAddressResolvingHost(id.host, port: id.port)
         let password: String? = id.password.isEmpty ? nil : id.password
-        let config = try RedisConnection.Configuration(address: address, password: password)
-        let connection = try await RedisConnection.make(
-            configuration: config,
-            boundEventLoop: eventLoop
-        ).get()
-        return RedisClient(connection: connection)
+        let config = try RedisConnection.Configuration(
+            address: address, password: password, defaultLogger: id.connectionLogger
+        )
+        let opened = NIOLockedValueBox<Channel?>(nil)
+        // RediStack's own pipeline, with RESPReplyGuard in front of its reply decoder.
+        let bootstrap = ClientBootstrap(group: eventLoop)
+            .channelOption(.socketOption(.so_reuseaddr), value: 1)
+            .channelInitializer { channel in
+                opened.withLockedValue { $0 = channel }
+                return channel.pipeline.addBaseRedisHandlers().flatMapThrowing {
+                    try channel.pipeline.syncOperations.addHandler(
+                        RESPReplyGuard(), name: "PerfectRedis.ReplyGuard", position: .first
+                    )
+                }
+            }
+        // commandTimeout also bounds connecting: the TCP connect, then AUTH and anything else
+        // RediStack sends before handing over the connection.
+        let timedOut = NIOLockedValueBox(false)
+        var deadline: Scheduled<Void>?
+        if let commandTimeout {
+            _ = bootstrap.connectTimeout(commandTimeout)
+            deadline = eventLoop.scheduleTask(in: commandTimeout) {
+                timedOut.withLockedValue { $0 = true }
+                opened.withLockedValue { $0 }?.close(promise: nil)
+            }
+        }
+        let connection: RedisConnection
+        do {
+            connection = try await RedisConnection.make(
+                configuration: config,
+                boundEventLoop: eventLoop,
+                configuredTCPClient: bootstrap
+            ).get()
+            deadline?.cancel()
+            if timedOut.withLockedValue({ $0 }) {
+                // The deadline closed the channel just as RediStack finished.
+                throw CommandError("Connection closed by commandTimeout while connecting")
+            }
+        } catch {
+            deadline?.cancel()
+            // A failed AUTH leaves the socket open; RediStack doesn't close it.
+            try? await opened.withLockedValue { $0 }?.close()
+            if timedOut.withLockedValue({ $0 }) {
+                let ms = (commandTimeout?.nanoseconds ?? 0) / 1_000_000
+                throw CommandError("Couldn't connect and authenticate within \(ms) ms")
+            }
+            throw error
+        }
+        guard let channel = opened.withLockedValue({ $0 }) else {
+            throw CommandError("Connected without a channel")
+        }
+        return RedisClient(connection: connection, channel: channel, commandTimeout: commandTimeout)
     }
 
-    private init(connection: RedisConnection) {
+    private init(connection: RedisConnection, channel: Channel, commandTimeout: TimeAmount?) {
         self.connection = connection
+        self.channel = channel
+        self.commandTimeout = commandTimeout
+        let (stream, sink) = AsyncStream.makeStream(of: PublishedMessage.self)
+        (messages, messageSink) = (stream, sink)
+        // However the connection ends (close(), a timeout, the server dropping it), so does
+        // the stream, and so does every wait for a reply. One callback for the connection's
+        // lifetime: NIO keeps closeFuture callbacks until the channel closes, so registering
+        // one per command grew memory with every command.
+        let closeWatchers = self.closeWatchers
+        channel.closeFuture.whenComplete { _ in
+            sink.finish()
+            closeWatchers.closeAll()
+        }
     }
 
+    /// Waits to end when the connection closes. RediStack doesn't fail pending subscription
+    /// changes when its channel closes.
+    nonisolated let closeWatchers = CloseWatchers()
+
+    /// A client released without close() closes its connection outright; replies still
+    /// outstanding are lost. Prefer close(), which gives them a moment to arrive.
+    deinit {
+        messageSink.finish()
+        channel.close(promise: nil)
+    }
+
+    /// Closes the connection. Replies still outstanding get up to a second to arrive (a
+    /// blocking command or a silent server would otherwise hold close() forever); then the
+    /// connection is closed outright and those commands throw.
     public func close() async throws {
-        _ = try await connection.close().get()
+        messageSink.finish()
+        let channel = self.channel
+        connection.close()
+        let deadline = channel.eventLoop.scheduleTask(in: .seconds(1)) { channel.close(promise: nil) }
+        defer { deadline.cancel() }
+        try await channel.closeFuture.get()
     }
 
     // All public commands route through here.
     func send(_ command: String, _ args: [RESPValue] = []) async throws -> RedisResponse {
-        let result = try await connection.send(command: command, with: args).get()
-        return RedisResponse(result)
+        let deadline = newDeadline()
+        try await waitForTransaction(deadline: deadline)
+        // On a closed connection, let RediStack report connectionClosed instead.
+        guard !subscriptionMode || !connection.isConnected else {
+            throw CommandError(
+                "\(command) can't be sent while this client has subscriptions; use another client, or unsubscribe from everything first"
+            )
+        }
+        // Cancelled already: don't send, since cancelling an in-flight command closes the
+        // connection for every task using this client.
+        try Task.checkCancellation()
+        try checkDeadline(deadline, waitingFor: "its turn")
+        inFlight += 1
+        defer { commandFinished() }
+        return try await awaitReply(
+            connection.send(command: command, with: args).map { RedisResponse($0) }, deadline: deadline
+        )
+    }
+
+    /// When a call started now must finish: commandTimeout is one budget for the whole call,
+    /// every wait included.
+    func newDeadline() -> NIODeadline? {
+        commandTimeout.map { NIODeadline.now() + $0 }
+    }
+
+    private var timeoutDescription: String {
+        "the commandTimeout of \((commandTimeout?.nanoseconds ?? 0) / 1_000_000) ms"
+    }
+
+    /// Throws CommandError, before anything is sent, if the deadline has passed.
+    func checkDeadline(_ deadline: NIODeadline?, waitingFor what: String) throws {
+        if let deadline, deadline <= .now() {
+            throw CommandError("Waited \(timeoutDescription) for \(what)")
+        }
+    }
+
+    // MARK: Subscription mode
+
+    /// Commands sent whose replies haven't arrived.
+    private var inFlight = 0
+    /// While a subscription change is under way or any subscription is active. Ordinary
+    /// commands are refused meanwhile: RediStack's pub/sub handler inspects every reply, so a
+    /// reply shaped like a subscription message (ordinary data can be) would be misread.
+    private var subscriptionMode: Bool {
+        subscriptionChangesActive > 0 || connection.isSubscribed
+    }
+
+    private func commandFinished() {
+        inFlight -= 1
+        if inFlight == 0 { stateChanged() }
+    }
+
+    // MARK: Waiting for the client's state
+
+    private struct StateWaiter {
+        let continuation: CheckedContinuation<Void, Never>
+        /// Wakes the waiter at its deadline; cancelled when it wakes for another reason.
+        let timer: Scheduled<Void>?
+
+        func resume() {
+            timer?.cancel()
+            continuation.resume()
+        }
+    }
+
+    private var stateWaiters: [UUID: StateWaiter] = [:]
+
+    /// Suspends until `condition` holds, re-checking it whenever the client's state changes.
+    /// Throws CancellationError if the task is cancelled, and CommandError once the call's
+    /// deadline has passed. Nothing has been sent, so neither closes the connection.
+    func waitUntil(_ what: String, deadline: NIODeadline?, _ condition: () -> Bool) async throws {
+        while !condition() {
+            try Task.checkCancellation()
+            try checkDeadline(deadline, waitingFor: what)
+            let id = UUID()
+            await withTaskCancellationHandler {
+                // Through an actor method: Swift 6.4's release builds otherwise run this
+                // continuation's body off the actor and trap on the isolation check.
+                await self.park(id, until: deadline)
+            } onCancel: {
+                Task { await self.wake(id) }
+            }
+        }
+    }
+
+    /// Suspends until `wake(id)`, a state change, or `deadline`.
+    private func park(_ id: UUID, until deadline: NIODeadline?) async {
+        await withCheckedContinuation { continuation in
+            // Weak, so a pending timer never keeps a released client (and its socket) alive.
+            let timer = deadline.map { deadline in
+                channel.eventLoop.scheduleTask(deadline: deadline) { [weak self] () -> Void in
+                    Task { await self?.wake(id) }
+                }
+            }
+            stateWaiters[id] = StateWaiter(continuation: continuation, timer: timer)
+        }
+    }
+
+    private func wake(_ id: UUID) {
+        stateWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    /// Lets every waiter re-check its condition.
+    private func stateChanged() {
+        let waiters = stateWaiters
+        stateWaiters.removeAll()
+        for waiter in waiters.values { waiter.resume() }
+    }
+
+    /// Subscription changes between entry and exit, waiting or in progress.
+    private var subscriptionChangesActive = 0
+    /// Subscription changes run one at a time, in arrival order, by ticket.
+    private var nextSubscriptionTicket = 0
+    private var servingSubscriptionTicket = 0
+    private var abandonedSubscriptionTickets: Set<Int> = []
+
+    /// Runs one subscribe or unsubscribe. Changes run one at a time in arrival order: two at
+    /// once confuse RediStack (an unsubscribe-all completing while a subscribe is pending
+    /// removes its pub/sub handler and the subscribe never completes). From entry to exit the
+    /// client counts as subscribing, so no ordinary command goes out meanwhile, and a
+    /// subscribe first waits for commands already in flight, so none of their replies pass
+    /// through RediStack's pub/sub handler.
+    func changeSubscriptions(
+        entering: Bool, _ change: () -> EventLoopFuture<Void>?, then record: () -> Void
+    ) async throws {
+        if entering, let current = currentTransaction, current == transactionOwner {
+            throw CommandError("subscribe can't be used inside multi(body:)")
+        }
+        let deadline = newDeadline()
+        try await waitForTransaction(deadline: deadline)
+        subscriptionChangesActive += 1
+        let ticket = nextSubscriptionTicket
+        nextSubscriptionTicket += 1
+        defer {
+            subscriptionChangesActive -= 1
+            if servingSubscriptionTicket == ticket {
+                servingSubscriptionTicket += 1
+                while abandonedSubscriptionTickets.remove(servingSubscriptionTicket) != nil {
+                    servingSubscriptionTicket += 1
+                }
+            } else {
+                abandonedSubscriptionTickets.insert(ticket)
+            }
+            stateChanged()
+        }
+        try await waitUntil("earlier subscription changes", deadline: deadline) {
+            servingSubscriptionTicket == ticket
+        }
+        if entering {
+            try await waitUntil("commands in flight to finish before subscribing", deadline: deadline) {
+                inFlight == 0
+            }
+        }
+        try Task.checkCancellation()
+        try checkDeadline(deadline, waitingFor: "its turn")
+        if !connection.isConnected {
+            // Nothing is subscribed on a closed connection; say so the way subscribe does.
+            subscribedChannels.removeAll()
+            subscribedPatterns.removeAll()
+            throw RedisClientError.connectionClosed
+        }
+        guard let future = change() else { return }
+        try await awaitReply(future, deadline: deadline)
+        // Before the next change takes its turn.
+        record()
+    }
+
+    /// What this client is subscribed to, so unsubscribe sends only names RediStack tracks:
+    /// RediStack 1.6.3 drops the server's reply to anything else, and the call never returns.
+    private var subscribedChannels: Set<String> = []
+    private var subscribedPatterns: Set<String> = []
+
+    func recordSubscription(channels: Set<String> = [], patterns: Set<String> = []) {
+        subscribedChannels.formUnion(channels)
+        subscribedPatterns.formUnion(patterns)
+    }
+
+    func recordUnsubscription(channels: Set<String> = [], patterns: Set<String> = []) {
+        subscribedChannels.subtract(channels)
+        subscribedPatterns.subtract(patterns)
+    }
+
+    /// The tracked names to unsubscribe from: all of that kind for an empty list, otherwise
+    /// the requested names that are actually subscribed, without duplicates.
+    func unsubscribeTargets(_ requested: [String], from subscribed: Set<String>) -> Set<String> {
+        requested.isEmpty ? subscribed : subscribed.intersection(requested)
+    }
+
+    /// Awaits a reply, honouring commandTimeout and task cancellation. Either one closes the
+    /// connection: the command has been sent, so abandoning only its reply would leave the
+    /// server's next reply to be paired with whatever is sent next. The wait ends on the
+    /// timeout, cancellation or channel closing itself rather than on the future failing,
+    /// because RediStack doesn't fail every future (pending subscription changes) when its
+    /// channel closes.
+    func awaitReply<Value: Sendable>(_ future: EventLoopFuture<Value>, deadline: NIODeadline?) async throws -> Value {
+        let waiter = ReplyWaiter<Value>()
+        let channel = self.channel
+        let closeWatchers = self.closeWatchers
+        let timeoutDescription = self.timeoutDescription
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard waiter.install(continuation) else { return }
+                let watch = closeWatchers.add { waiter.finish(.failure(RedisClientError.connectionClosed)) }
+                future.whenComplete {
+                    closeWatchers.remove(watch)
+                    waiter.finish($0)
+                }
+                if let deadline {
+                    let timer = future.eventLoop.scheduleTask(deadline: deadline) {
+                        waiter.finish(.failure(CommandError(
+                            "No reply within \(timeoutDescription); the connection was closed"
+                        )))
+                        channel.close(promise: nil)
+                    }
+                    future.whenComplete { _ in timer.cancel() }
+                }
+            }
+        } onCancel: {
+            waiter.finish(.failure(CancellationError()))
+            channel.close(promise: nil)
+        }
+    }
+
+    // MARK: Transaction ownership
+
+    /// The `multi(body:)` calls the current task is running inside, by client. Child tasks
+    /// inherit it, so structured concurrency inside the body still reaches the server.
+    @TaskLocal static var currentTransactions: [ObjectIdentifier: UUID] = [:]
+
+    /// The `multi(body:)` call on this client that the current task is running inside.
+    private var currentTransaction: UUID? { Self.currentTransactions[ObjectIdentifier(self)] }
+    /// The transaction whose MULTI is open on the connection.
+    private var transactionOwner: UUID?
+
+    /// Suspends while a `multi(body:)` call that the current task isn't part of is open, so
+    /// other callers' commands don't get queued into it.
+    func waitForTransaction(deadline: NIODeadline?) async throws {
+        try await waitUntil("another task's multi(body:) to finish", deadline: deadline) {
+            transactionOwner == nil || transactionOwner == currentTransaction
+        }
+    }
+
+    func beginTransaction() async throws -> UUID {
+        if let current = currentTransaction, current == transactionOwner {
+            throw CommandError("multi(body:) calls cannot be nested")
+        }
+        try await waitForTransaction(deadline: newDeadline())
+        let id = UUID()
+        transactionOwner = id
+        return id
+    }
+
+    func endTransaction() {
+        transactionOwner = nil
+        stateChanged()
     }
 }
 
@@ -185,11 +575,53 @@ public actor RedisClient {
 @inline(__always)
 private func arg(_ s: String) -> RESPValue { RESPValue(from: s) }
 
+/// Seconds as a whole number of milliseconds, the unit the P* commands take. Throws
+/// rather than trapping when the value is NaN, infinite or beyond Int's range.
+private func milliseconds(_ seconds: Double) throws -> String {
+    let ms = (seconds * 1000).rounded(.towardZero)
+    guard ms.isFinite, ms >= Double(Int.min), ms < Double(Int.max) else {
+        throw RedisClient.CommandError("\(seconds) seconds is not a representable number of milliseconds")
+    }
+    return String(Int(ms))
+}
+
 // MARK: - sendCommandAsRESP
 
 public extension RedisClient {
+    /// Sends any command, with its name and every parameter as a RESP bulk string.
+    ///
+    /// The connection pairs each command with exactly one RESP2 reply, so this throws
+    /// `CommandError`, without sending anything, for commands that would break that pairing
+    /// and leave later replies matched to the wrong commands: the (P/S)SUBSCRIBE family (use
+    /// `subscribe` and `messages`), MONITOR, SYNC, PSYNC, CLIENT REPLY OFF or SKIP, HELLO
+    /// asking for any protocol other than 2, and RESET.
     func sendCommandAsRESP(name: String, parameters: [String]) async throws -> RedisResponse {
-        try await send(name, parameters.map { arg($0) })
+        if let reason = Self.breaksReplyPairing(name: name, parameters: parameters) {
+            throw CommandError("\(name) is not supported through sendCommandAsRESP: \(reason)")
+        }
+        return try await send(name, parameters.map { arg($0) })
+    }
+}
+
+extension RedisClient {
+    static func breaksReplyPairing(name: String, parameters: [String]) -> String? {
+        switch name.uppercased() {
+        case "SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE", "UNSUBSCRIBE", "PUNSUBSCRIBE", "SUNSUBSCRIBE":
+            return "subscription replies arrive unrequested; use subscribe(channels:) or subscribe(patterns:)"
+        case "MONITOR", "SYNC", "PSYNC":
+            return "the server streams replies that no command asked for"
+        case "RESET":
+            return "it silently ends subscriptions and transactions the client is tracking; use close() and reconnect"
+        case "CLIENT":
+            guard parameters.first?.uppercased() == "REPLY",
+                  parameters.dropFirst().first?.uppercased() != "ON" else { return nil }
+            return "commands whose replies are suppressed would be paired with later replies"
+        case "HELLO":
+            guard let version = parameters.first, version != "2" else { return nil }
+            return "only RESP2 is supported, so HELLO may only ask for protocol 2"
+        default:
+            return nil
+        }
     }
 }
 
@@ -255,7 +687,7 @@ public extension RedisClient {
         return try await send("CLIENT", args)
     }
     func clientPause(timeoutSeconds: Double) async throws -> RedisResponse {
-        try await send("CLIENT", [arg("PAUSE"), arg(String(Int(timeoutSeconds * 1000)))])
+        try await send("CLIENT", [arg("PAUSE"), arg(try milliseconds(timeoutSeconds))])
     }
 }
 
@@ -268,7 +700,7 @@ public extension RedisClient {
         expires: Double = 0, ifNotExists: Bool = false, ifExists: Bool = false
     ) async throws -> RedisResponse {
         var args: [RESPValue] = [arg(key), value.resp]
-        if expires != 0 { args += [arg("PX"), arg(String(Int(expires * 1000)))] }
+        if expires != 0 { args += [arg("PX"), arg(try milliseconds(expires))] }
         if ifNotExists { args.append(arg("NX")) }
         else if ifExists { args.append(arg("XX")) }
         return try await send("SET", args)
@@ -324,10 +756,10 @@ public extension RedisClient {
     }
 
     func expire(key: String, seconds: Double) async throws -> RedisResponse {
-        try await send("PEXPIRE", [arg(key), arg(String(Int(seconds * 1000)))])
+        try await send("PEXPIRE", [arg(key), arg(try milliseconds(seconds))])
     }
     func expireAt(key: String, seconds: Double) async throws -> RedisResponse {
-        try await send("PEXPIREAT", [arg(key), arg(String(Int(seconds * 1000)))])
+        try await send("PEXPIREAT", [arg(key), arg(try milliseconds(seconds))])
     }
     func timeToExpire(key: String) async throws -> RedisResponse {
         try await send("PTTL", [arg(key)])
@@ -470,33 +902,147 @@ public extension RedisClient {
     }
     func multiUnwatch() async throws -> RedisResponse { try await send("UNWATCH") }
 
+    /// Runs `body` inside MULTI…EXEC and returns EXEC's reply, or sends DISCARD and rethrows
+    /// if `body` throws.
+    ///
+    /// Until it returns, commands this client receives from other tasks wait rather than
+    /// being queued into the transaction. Commands from `body` and from child tasks it
+    /// creates go through. Calls nested inside `body` throw `CommandError`. Calling
+    /// `multiBegin()` and `multiExec()` yourself has no such protection.
     func multi(body: () async throws -> ()) async throws -> RedisResponse {
-        _ = try await multiBegin()
-        do {
-            try await body()
-            return try await multiExec()
-        } catch {
-            _ = try await multiDiscard()
-            throw error
+        let id = try await beginTransaction()
+        defer { endTransaction() }
+        var transactions = Self.currentTransactions
+        transactions[ObjectIdentifier(self)] = id
+        return try await Self.$currentTransactions.withValue(transactions) {
+            _ = try await multiBegin()
+            do {
+                try await body()
+            } catch {
+                await abandonTransaction()
+                throw error
+            }
+            // A cancelled task can't send EXEC; closing the connection discards the MULTI.
+            guard !Task.isCancelled else {
+                await closeOutright()
+                throw CancellationError()
+            }
+            do {
+                return try await multiExec()
+            } catch let error as RedisError {
+                throw error  // The server answered EXEC, so the transaction is over.
+            } catch {
+                // EXEC may not have reached the server; don't leave MULTI open.
+                await closeOutright()
+                throw error
+            }
         }
+    }
+
+    /// Ends a transaction whose body threw: DISCARD, or, if that can't be sent (the task is
+    /// cancelled) or doesn't get an answer, close the connection, which discards it too.
+    /// Otherwise other tasks' commands would be queued into the open MULTI.
+    private func abandonTransaction() async {
+        guard !Task.isCancelled else {
+            await closeOutright()
+            return
+        }
+        do {
+            _ = try await multiDiscard()
+        } catch is RedisError {
+            // The server answered DISCARD.
+        } catch {
+            await closeOutright()
+        }
+    }
+
+    /// Closes the connection at once, without waiting for outstanding replies.
+    private func closeOutright() async {
+        try? await channel.close()
     }
 }
 
 // MARK: - Pub/sub
 
 public extension RedisClient {
-    func subscribe(patterns: [String]) async throws -> RedisResponse {
-        try await send("PSUBSCRIBE", patterns.map { arg($0) })
+    /// A message delivered to one of this client's subscriptions.
+    struct PublishedMessage: Sendable {
+        /// The channel it was published to (for a pattern subscription, the matching channel).
+        public let channel: String
+        /// The published payload, normally a `.bulkString`.
+        public let message: RedisResponse
     }
-    func subscribe(channels: [String]) async throws -> RedisResponse {
-        try await send("SUBSCRIBE", channels.map { arg($0) })
+
+    /// Subscribes to channels matching each glob-style pattern. Messages arrive on `messages`.
+    ///
+    /// Commands this client has already sent finish first. From then until the last
+    /// subscription ends, the client refuses every other command with `CommandError`, so
+    /// publish and do other work from a second client.
+    func subscribe(patterns: [String]) async throws {
+        guard !patterns.isEmpty else { throw CommandError("subscribe(patterns:) needs at least one pattern") }
+        let sink = messageSink
+        let unique = Set(patterns)
+        try await changeSubscriptions(entering: true) {
+            connection.psubscribe(
+                to: Array(unique),
+                messageReceiver: { channel, value in
+                    sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+                },
+                onSubscribe: nil,
+                onUnsubscribe: nil
+            )
+        } then: {
+            recordSubscription(patterns: unique)
+        }
     }
-    func unsubscribe(patterns: [String]) async throws -> RedisResponse {
-        try await send("PUNSUBSCRIBE", patterns.map { arg($0) })
+
+    /// Subscribes to channels. Messages arrive on `messages`.
+    ///
+    /// Commands this client has already sent finish first. From then until the last
+    /// subscription ends, the client refuses every other command with `CommandError`, so
+    /// publish and do other work from a second client.
+    func subscribe(channels: [String]) async throws {
+        guard !channels.isEmpty else { throw CommandError("subscribe(channels:) needs at least one channel") }
+        let sink = messageSink
+        let unique = Set(channels)
+        try await changeSubscriptions(entering: true) {
+            connection.subscribe(
+                to: unique.map { RedisChannelName($0) },
+                messageReceiver: { channel, value in
+                    sink.yield(PublishedMessage(channel: channel.rawValue, message: RedisResponse(value)))
+                },
+                onSubscribe: nil,
+                onUnsubscribe: nil
+            )
+        } then: {
+            recordSubscription(channels: unique)
+        }
     }
-    func unsubscribe(channels: [String]) async throws -> RedisResponse {
-        try await send("UNSUBSCRIBE", channels.map { arg($0) })
+
+    /// Unsubscribes from the given patterns, or from every pattern when the list is empty.
+    /// Patterns this client isn't subscribed to are ignored.
+    func unsubscribe(patterns: [String]) async throws {
+        var targets: Set<String> = []
+        try await changeSubscriptions(entering: false) {
+            targets = unsubscribeTargets(patterns, from: subscribedPatterns)
+            return targets.isEmpty ? nil : connection.punsubscribe(from: Array(targets))
+        } then: {
+            recordUnsubscription(patterns: targets)
+        }
     }
+
+    /// Unsubscribes from the given channels, or from every channel when the list is empty.
+    /// Channels this client isn't subscribed to are ignored.
+    func unsubscribe(channels: [String]) async throws {
+        var targets: Set<String> = []
+        try await changeSubscriptions(entering: false) {
+            targets = unsubscribeTargets(channels, from: subscribedChannels)
+            return targets.isEmpty ? nil : connection.unsubscribe(from: targets.map { RedisChannelName($0) })
+        } then: {
+            recordUnsubscription(channels: targets)
+        }
+    }
+
     func publish(channel: String, message: RedisValue) async throws -> RedisResponse {
         try await send("PUBLISH", [arg(channel), message.resp])
     }
@@ -607,4 +1153,86 @@ public extension RedisClient {
         if let c = count   { args += [arg("COUNT"), arg(String(c))] }
         return try await send("HSCAN", args)
     }
+}
+
+/// Resumes a continuation exactly once, with whichever of a reply, a timeout or a
+/// cancellation comes first. A result that arrives before the continuation is installed
+/// is kept and delivered when it is.
+final class ReplyWaiter<Value: Sendable>: Sendable {
+    private enum State {
+        case idle
+        case waiting(CheckedContinuation<Value, Error>)
+        case finishedEarly(Result<Value, Error>)
+        case done
+    }
+    private let state = NIOLockedValueBox(State.idle)
+
+    /// Returns false if the waiter already finished; the continuation has then been resumed.
+    func install(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
+        let early: Result<Value, Error>? = state.withLockedValue { state in
+            if case .finishedEarly(let result) = state {
+                state = .done
+                return result
+            }
+            state = .waiting(continuation)
+            return nil
+        }
+        guard let early else { return true }
+        continuation.resume(with: early)
+        return false
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        let continuation: CheckedContinuation<Value, Error>? = state.withLockedValue { state in
+            switch state {
+            case .idle:
+                state = .finishedEarly(result)
+                return nil
+            case .waiting(let continuation):
+                state = .done
+                return continuation
+            case .finishedEarly, .done:
+                return nil
+            }
+        }
+        continuation?.resume(with: result)
+    }
+}
+
+/// Callbacks to run once when the connection closes, each removed again when its wait ends
+/// some other way, so the set holds only waits still in progress.
+final class CloseWatchers: Sendable {
+    private struct State {
+        var closed = false
+        var watchers: [UUID: @Sendable () -> Void] = [:]
+    }
+    private let state = NIOLockedValueBox(State())
+
+    /// Registers `onClose`, or runs it at once if the connection has already closed.
+    func add(_ onClose: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        let alreadyClosed = state.withLockedValue { state -> Bool in
+            guard !state.closed else { return true }
+            state.watchers[id] = onClose
+            return false
+        }
+        if alreadyClosed { onClose() }
+        return id
+    }
+
+    func remove(_ id: UUID) {
+        state.withLockedValue { _ = $0.watchers.removeValue(forKey: id) }
+    }
+
+    func closeAll() {
+        let watchers = state.withLockedValue { state -> [@Sendable () -> Void] in
+            state.closed = true
+            defer { state.watchers.removeAll() }
+            return Array(state.watchers.values)
+        }
+        for watcher in watchers { watcher() }
+    }
+
+    /// Waits currently registered.
+    var count: Int { state.withLockedValue { $0.watchers.count } }
 }

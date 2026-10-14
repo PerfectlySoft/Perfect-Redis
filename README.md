@@ -1,86 +1,33 @@
-# Perfect-Redis [简体中文](README.zh_CN.md)
+# Perfect-Redis
 
 <p align="center">
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Swift-6.2-orange.svg?style=flat" alt="Swift 6.2">
+        <img src="https://img.shields.io/badge/Swift-6.2%2B-orange.svg?style=flat" alt="Swift 6.2+">
     </a>
     <a href="https://developer.apple.com/swift/" target="_blank">
-        <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B-lightgray.svg?style=flat" alt="Platforms macOS 12+">
+        <img src="https://img.shields.io/badge/Platforms-macOS%2012%2B%20%7C%20iOS%2017%2B%20%7C%20Linux-lightgray.svg?style=flat" alt="Platforms macOS 12+ | iOS 17+ | Linux">
     </a>
     <a href="http://perfect.org/licensing.html" target="_blank">
         <img src="https://img.shields.io/badge/License-Apache-lightgrey.svg?style=flat" alt="License Apache">
     </a>
 </p>
 
-Async/await Redis client support for Perfect, built on [swift-server/RediStack](https://github.com/swift-server/RediStack).
+An async/await Redis client for Perfect, built on [swift-server/RediStack](https://github.com/swift-server/RediStack).
 
-## Status
+`RedisClient` is an `actor` with an `async throws` API. Every command and argument goes to the server as a RESP bulk string, so keys and values can hold any bytes, CR and LF included. [Perfect-Session](https://github.com/PerfectlySoft/Perfect-Session)'s `PerfectSessionRedis` module stores its sessions with it.
 
-This is a Swift 6 rewrite of the original PerfectlySoft `Perfect-Redis` package. The old synchronous/completion-handler API has been **deliberately removed** — `Sources/PerfectRedis/RedisClientSync.swift` is now a one-line stub confirming this. The public API is a Swift `actor` (`RedisClient`) with a fully `async throws` surface, layered on top of RediStack's NIO-based Redis client rather than a hand-rolled RESP implementation.
+## Requirements
 
-This package is a real, tested dependency: [Perfect-Session](https://github.com/PerfectlySoft/Perfect-Session)'s `PerfectSessionRedis` module imports it directly and implements a full `SessionDriver` backend with it.
+- Swift 6.2 or newer (`swift-tools-version: 6.2`, Swift 6 language mode).
+- macOS 12+, iOS 17+, or Linux. CI builds and tests on Ubuntu 24.04 with Swift 6.2 and 6.4, macOS with Xcode 26.0.1 and 26.6, and the iOS Simulator.
+- A Redis server that speaks RESP2. The live tests run against Redis 7.
+- RediStack (`from: "1.6.0"`), plus SwiftNIO and swift-log, which RediStack also uses; SwiftPM resolves them all.
 
-The pre-Swift-6 version of this package is preserved on the [`legacy`](../../tree/legacy) branch.
-
-`Package.swift` declares `swift-tools-version: 6.2` and `platforms: [.macOS(.v12)]`, with `.swiftLanguageMode(.v6)` (full Swift 6 strict concurrency) on both the library and test targets. **No Linux, iOS, tvOS, or watchOS platforms are declared** — this is macOS-only today.
-
-## Quick Start
-
-Connect a Redis client with defaults (localhost, default port):
-
-```swift
-import PerfectRedis
-
-let client = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
-```
-
-Ping the server:
-
-```swift
-let response = try await client.ping()
-guard case .simpleString(let s) = response else {
-    return
-}
-assert(s == "PONG", "Unexpected response \(response)")
-```
-
-Set/get a value:
-
-```swift
-let (key, value) = ("mykey", "myvalue")
-var response = try await client.set(key: key, value: .string(value))
-guard case .simpleString = response else {
-    // handle error
-    return
-}
-response = try await client.get(key: key)
-guard case .bulkString = response else {
-    // handle error
-    return
-}
-let s = response.string
-assert(s == value, "Unexpected response \(response)")
-```
-
-Pub/sub with two clients (no callback nesting — every call is plain `async throws`):
-
-```swift
-let client1 = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
-let client2 = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
-
-try await client1.subscribe(channels: ["foo"])
-try await client2.publish(channel: "foo", message: .string("Hello!"))
-```
-
-`RedisClient` is a Swift `actor`; `RedisResponse` and the other public value types (`RedisClientIdentifier`, `RedisValue`, and the `RedisHash`/`RedisList`/`RedisSet` wrappers) are `Sendable`. There is no synchronous or completion-handler API anywhere in the module.
-
-## Building
-
-Add it as a dependency in your `Package.swift`:
+## Installation
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", branch: "main"),
+    .package(url: "https://github.com/PerfectlySoft/Perfect-Redis.git", from: "4.0.0"),
 ],
 targets: [
     .target(
@@ -92,7 +39,134 @@ targets: [
 ]
 ```
 
-`PerfectRedis` in turn depends on [`RediStack`](https://github.com/swift-server/RediStack) (`from: "1.6.0"`), resolved automatically from GitHub — no additional sibling checkout is required for that dependency.
+## Quick start
 
-## Further Information
-For more information on the Perfect project, please visit [perfect.org](http://perfect.org).
+```swift
+import PerfectRedis
+
+// Defaults to 127.0.0.1:6379 with no password.
+let client = try await RedisClient.connect(withIdentifier: RedisClientIdentifier())
+
+let pong = try await client.ping()            // .simpleString("PONG")
+
+_ = try await client.set(key: "greeting", value: .string("hello"), expires: 60)
+let reply = try await client.get(key: "greeting")
+print(reply.string ?? "missing")              // "hello"
+print(try await client.get(key: "nope").isNil) // true
+
+try await client.close()
+```
+
+Connect to another server, with a password and a timeout for each call:
+
+```swift
+let id = RedisClientIdentifier(withHost: "redis.internal", port: 6379,
+                               password: "secret", commandTimeout: 5)
+let client = try await RedisClient.connect(withIdentifier: id)
+```
+
+Replies come back as `RedisResponse`: `.simpleString`, `.bulkString([UInt8]?)` (nil for a missing value, `[]` for an empty one), `.integer`, `.array`, or `.error` for an error nested inside an array (as `EXEC` returns). The `string`, `integer`, `isNil` and `isSimpleOK` accessors cover the common cases. `RedisHash`, `RedisList` and `RedisSet` wrap a client and a key for the hash, list and set commands, and `sendCommandAsRESP(name:parameters:)` sends any other command.
+
+### Errors
+
+Errors from the server and the connection are RediStack's own types, passed through unwrapped:
+
+- An error reply to a command (such as `WRONGTYPE`) is thrown as RediStack's `RedisError`, whose `message` starts with `(Redis) `.
+- A closed or dropped connection makes commands throw RediStack's `RedisClientError` (`.connectionClosed`). A client doesn't reconnect; connect a new one.
+
+Problems the client catches itself are thrown as `RedisClient.CommandError`: arguments it can't send (a non-finite duration, say), commands `sendCommandAsRESP` refuses, commands sent while the client has subscriptions, a reply with impossible framing, or a `commandTimeout` running out.
+
+### Pub/sub
+
+Messages arrive on the subscribing client's `messages` stream:
+
+```swift
+let subscriber = try await RedisClient.connect()
+let publisher = try await RedisClient.connect()
+
+try await subscriber.subscribe(channels: ["news"])
+try await subscriber.subscribe(patterns: ["weather.*"])
+
+Task {
+    for await message in subscriber.messages {
+        print(message.channel, message.message.string ?? "")
+    }
+}
+
+_ = try await publisher.publish(channel: "news", message: .string("Hello!"))
+```
+
+`subscribe` first waits for commands the client has already sent to get their replies. From then until its last subscription ends, the client throws `CommandError` for every other command, so publish and run other commands from a second client. Subscription changes run one at a time, in the order they're made. `unsubscribe(channels: [])` drops every channel subscription and `unsubscribe(patterns: [])` every pattern one; names the client isn't subscribed to are ignored, so unsubscribing from nothing returns at once. Once both kinds are gone, the client accepts ordinary commands again.
+
+If the server refuses a subscription (for example an ACL `NOPERM`), RediStack drops the error reply, so `subscribe` waits until `commandTimeout` (or until the connection closes). Meanwhile the client refuses every command and later subscription changes queue behind it. Set a `commandTimeout` if your server restricts channels. On a closed connection, `subscribe` and `unsubscribe` both throw `RedisClientError.connectionClosed`. The stream ends when the connection closes for any reason: `close()`, a timeout, a cancellation, or the server dropping it.
+
+### Transactions
+
+```swift
+let results = try await client.multi {
+    _ = try await client.set(key: "a", value: .string("1"))
+    _ = try await client.increment(key: "a")
+}   // .array([.simpleString("OK"), .integer(2)])
+```
+
+While `multi` runs, commands that other tasks send on the same client wait until `EXEC` or `DISCARD`, so they aren't queued into the transaction. If the body throws, the transaction is discarded and the error rethrown. Commands from the body's child tasks are part of the transaction; a task started outside it (or detached) that the body waits for will deadlock. So will two tasks that take transactions on two clients in opposite orders (`c.multi { d… }` while another runs `d.multi { c… }`). If the task is cancelled while the body runs, the client closes its connection rather than leave a `MULTI` open. `multiBegin()`, `multiExec()` and `multiDiscard()` are also available, but called by hand they have no such protection.
+
+### Timeouts, cancellation and blocking commands
+
+`commandTimeout` is one budget for each call, covering everything the call waits for: another task's transaction, earlier subscription changes, commands in flight (for `subscribe`), and then the reply. If it runs out before anything is sent, the call throws `CommandError` and the connection stays open; if it runs out while waiting for the reply, the call throws `CommandError` and the connection is closed. It also bounds `connect` from the TCP connection on, including `AUTH` (but not the host name lookup). The default is no timeout. `multi(body:)` isn't one budget: waiting for another task's transaction, `MULTI`, each command in the body and `EXEC` each get their own. Cancelling a task while its command is waiting for a reply also closes the connection, and the command throws `CancellationError`; a task that is already cancelled, or cancelled while waiting its turn, throws without sending anything. The client closes the connection in both cases because the command has already gone to the server, and abandoning just its reply would hand the next reply to the wrong command. Every other command waiting on that client then fails too.
+
+`close()` gives outstanding replies up to a second, then closes the connection outright. Releasing a client without `close()` closes it immediately.
+
+Commands share one connection and are pipelined in order, so a blocking command such as `listPopFirstBlocking(keys:timeout:)` holds up everything sent after it on the same client. Give blocking commands their own client, and keep their server-side timeout shorter than `commandTimeout`.
+
+## Limitations
+
+- **RESP2 only.** `sendCommandAsRESP` refuses `HELLO` with any protocol version except 2. It also refuses commands that would break the one-reply-per-command pairing or the client's own bookkeeping: the `SUBSCRIBE` family (use `subscribe`), `MONITOR`, `SYNC`, `PSYNC`, `CLIENT REPLY OFF`/`SKIP`, and `RESET`.
+- **No TLS.** The connection is plain TCP. Use a TLS proxy or tunnel to reach a TLS-only server.
+- **Password only.** `AUTH` is sent with the password alone, so it authenticates as the `default` ACL user; there is no username option.
+- **No reconnection or pooling.** Each `RedisClient` is one connection.
+- **Replies of more than 2²⁴ elements are refused.** To keep a hostile server from making RediStack reserve unbounded memory, a reply with more than 16,777,216 array elements outstanding (an `LRANGE`, `KEYS`, `SMEMBERS` or `HGETALL` of a bigger collection) fails with `CommandError` and closes the connection. Page through large collections with `SCAN`-style commands or ranges.
+- **Host name lookup isn't bounded.** `connect` resolves the host with a blocking system call before `commandTimeout` starts; a hung DNS server holds `connect` until the system gives up.
+- **RediStack is deprecated upstream**: its maintainers point new users to valkey-swift. RediStack 1.6 still builds and works on Swift 6.2 and 6.4, and this release stays on it.
+
+## Logging
+
+By default the client gives RediStack a logger that discards everything. To see RediStack's logs, pass a `Logger` (from swift-log) as `RedisClientIdentifier(…, logger:)`. Be careful with its level: at `debug`, RediStack logs every command with its arguments, including the password sent with `AUTH`, and every reply; at `error`, every failed command.
+
+## Running the tests
+
+```sh
+swift test                      # reply, framing, argument and connection tests; live suites skip
+
+# The live suites FLUSHALL, so point them at a throwaway server.
+docker run -d --rm -p 6379:6379 redis:7
+REDIS_TESTS=1 swift test
+REDIS_TESTS=1 REDIS_HOST=redis.test REDIS_PORT=6380 REDIS_REQUIRE_LIVE=1 swift test
+```
+
+`REDIS_HOST` defaults to 127.0.0.1 and `REDIS_PORT` to 6379. With `REDIS_REQUIRE_LIVE=1`, a missing or unreachable server fails the run instead of skipping the live suites.
+
+## Migrating from 3.x
+
+4.0.0 is a rewrite. The API keeps the 3.x command names and `RedisResponse` shape, but everything is `async`:
+
+- `RedisClient.getClient(withIdentifier:)` (callback or throwing form) and `releaseClient(_:)` → `try await RedisClient.connect(withIdentifier:)` and `try await client.close()`.
+- Completion handlers and the blocking `throws` methods → `try await`. For example, `client.ping { response in … }` or `try client.ping()` becomes `try await client.ping()`.
+- Error replies → thrown. 3.x returned them as `.error(type:msg:)`; 4.0 throws `RedisError` (see [Errors](#errors)). `.error` now appears only inside arrays, such as `EXEC` results.
+- `sendCommand(name:parameters:callback:)` → `sendCommandAsRESP(name:parameters:)`.
+- `readPublished(timeoutSeconds:callback:)` → `for await message in client.messages`. `subscribe` and `unsubscribe` now return nothing.
+- `netTimeout` → `RedisClientIdentifier(…, commandTimeout:)`. `RedisClientIdentifier`'s `netGenerator` is gone.
+- `clientReply(type:)` is removed. Turning replies off would break reply pairing.
+- `RedisHash`, `RedisList` and `RedisSet` lost their collection-style API (`init(_:name:)`, subscripts, iteration, and the `exists`, `count`, `keys` and `values` properties), as did `client.hash(named:)`, `client.list(named:)` and `client.set(named:)`. They're now `init(client:key:)` with async methods named after the commands, such as `get(field:)`, `append(_:)` and `members()`.
+- `RedisClientIdentifier.client()`, `RedisClient.init(net:)` and `sendRawCommand(bytes:)` are gone; use `RedisClient.connect(withIdentifier:)` and `sendCommandAsRESP`.
+- `RedisResponse.toString()` and `RedisValue.toString()` → the `string` property. `RedisValue.commandString` is gone.
+- `[UInt8]` is a `RedisValueRepresentable`; other `ROctal` arrays aren't.
+- `RedisClient` is an `actor`, and one client can be shared between tasks: commands from different tasks are pipelined on its single connection. A subscribed client refuses other commands, `multi` makes other tasks wait, and a timeout or cancellation closes the connection for every task using it, so give subscriptions, blocking commands and cancellable work their own clients.
+
+## Legacy
+
+The pre-Swift-6 code is preserved on the [`legacy`](https://github.com/PerfectlySoft/Perfect-Redis/tree/legacy) branch, which points at the same commit as the 3.4.1 tag. Stay on 3.4.1 if you can't move to Swift 6.2 yet.
+
+## Further information
+
+For more information on the Perfect project, visit [perfect.org](http://perfect.org).

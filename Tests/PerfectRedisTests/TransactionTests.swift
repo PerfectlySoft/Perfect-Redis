@@ -1,0 +1,165 @@
+import Foundation
+import Testing
+@testable import PerfectRedis
+
+extension LiveRedisTests {
+    @Suite struct TransactionTests {
+        @Test func execReturnsQueuedResults() async throws {
+            try await RedisTestEnvironment.withClient { client in
+                let exec = try await client.multi {
+                    _ = try await client.set(key: "t", value: .string("1"))
+                    _ = try await client.increment(key: "t")
+                }
+                guard case .array(let results) = exec, results.count == 2 else {
+                    Issue.record("Expected two results, got \(exec)"); return
+                }
+                #expect(results[0].isSimpleOK)
+                #expect(results[1].integer == 2)
+            }
+        }
+
+        /// Another task's command must not land inside someone else's MULTI…EXEC.
+        @Test func otherTasksWaitForTheTransaction() async throws {
+            try await RedisTestEnvironment.withClient { client in
+                _ = try await client.set(key: "mk", value: .string("before"))
+                let outsider = Task {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                    return try await client.get(key: "mk")
+                }
+                let exec = try await client.multi {
+                    _ = try await client.set(key: "mk", value: .string("inside"))
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                }
+                let seen = try await outsider.value
+                #expect(seen.string == "inside", "The outsider's GET was \(seen)")
+                guard case .array(let results) = exec else {
+                    Issue.record("Expected EXEC results, got \(exec)"); return
+                }
+                #expect(results.count == 1)
+            }
+        }
+
+        @Test func concurrentTransactionsDontInterleave() async throws {
+            try await RedisTestEnvironment.withClient { client in
+                let results = try await withThrowingTaskGroup(of: RedisResponse.self) { group in
+                    for i in 0..<20 {
+                        group.addTask {
+                            try await client.multi {
+                                _ = try await client.set(key: "tx\(i)", value: .string("\(i)"))
+                                await Task.yield()
+                                _ = try await client.get(key: "tx\(i)")
+                            }
+                        }
+                    }
+                    var all: [RedisResponse] = []
+                    for try await r in group { all.append(r) }
+                    return all
+                }
+                #expect(results.count == 20)
+                for r in results {
+                    guard case .array(let pair) = r, pair.count == 2 else {
+                        Issue.record("Expected [OK, value], got \(r)"); continue
+                    }
+                    #expect(pair[0].isSimpleOK)
+                }
+            }
+        }
+
+        @Test func failingBodyDiscardsAndReleases() async throws {
+            struct Abandon: Error {}
+            try await RedisTestEnvironment.withClient { client in
+                await #expect(throws: Abandon.self) {
+                    try await client.multi {
+                        _ = try await client.set(key: "never", value: .string("x"))
+                        throw Abandon()
+                    }
+                }
+                let never = try await client.get(key: "never")
+                let pong = try await client.ping()
+                #expect(never.isNil)
+                #expect(pong.string == "PONG")
+            }
+        }
+
+        @Test func nestedTransactionIsRefused() async throws {
+            try await RedisTestEnvironment.withClient { client in
+                await #expect(throws: RedisClient.CommandError.self) {
+                    try await client.multi {
+                        _ = try await client.set(key: "outer", value: .string("x"))
+                        _ = try await client.multi {}
+                    }
+                }
+                let outer = try await client.get(key: "outer")
+                let pong = try await client.ping()
+                #expect(outer.isNil)
+                #expect(pong.string == "PONG")
+            }
+        }
+    
+        /// The transaction marker was one task-local shared by every client, so inside
+        /// b.multi, a's own transaction was no longer recognised and a's command waited for it.
+        @Test func transactionsOnTwoClientsNest() async throws {
+            let a = try await RedisTestEnvironment.connect()
+            let b = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            let task = Task {
+                try await a.multi {
+                    _ = try await b.multi {
+                        _ = try await a.set(key: "from-a", value: .string("1"))
+                        _ = try await b.set(key: "from-b", value: .string("2"))
+                    }
+                }
+            }
+            let watchdog = Task {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await a.close()
+                try? await b.close()
+            }
+            let result = await task.result
+            watchdog.cancel()
+            guard case .success(let exec) = result, case .array(let items) = exec else {
+                Issue.record("a.multi didn't complete: \(result)"); return
+            }
+            #expect(items.count == 1)
+            #expect(try await a.get(key: "from-a").string == "1")
+            #expect(try await a.get(key: "from-b").string == "2")
+            try await a.close()
+            try await b.close()
+        }
+    
+        /// A task cancelled while its multi body awaits something other than Redis must not
+        /// leave MULTI open: other tasks' commands would be QUEUED into it and a later EXEC
+        /// would commit the cancelled body's writes.
+        @Test(arguments: [false, true])
+        func cancellingTheBodyLeavesNoTransactionOpen(bodySwallowsCancellation: Bool) async throws {
+            let client = try await RedisTestEnvironment.connect()
+            _ = try await client.set(key: "cm", value: .string("before"))
+            let body = Task {
+                try await client.multi {
+                    _ = try await client.set(key: "cm", value: .string("inside"))
+                    if bodySwallowsCancellation {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                    } else {
+                        try await Task.sleep(nanoseconds: 300_000_000)
+                    }
+                }
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            body.cancel()
+            let outcome = await bounded(3, "cancelled multi") { try await body.value }
+            if case .success(let exec)? = outcome {
+                Issue.record("A cancelled multi returned \(exec)")
+            }
+            // The client either still works or has closed; it must never be inside MULTI.
+            if case .success(let reply)? = await bounded(3, "GET after cancelled multi", { try await client.get(key: "cm") }) {
+                #expect(reply.string == "before", "Got \(reply)")
+            }
+            if case .success(let reply)? = await bounded(3, "EXEC from outside", { try await client.multiExec() }) {
+                Issue.record("EXEC found an open transaction: \(reply)")
+            }
+            let fresh = try await RedisClient.connect(withIdentifier: RedisTestEnvironment.identifier)
+            #expect(try await fresh.get(key: "cm").string == "before")
+            try await fresh.close()
+            try? await client.close()
+        }
+    }
+}
